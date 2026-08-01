@@ -55,8 +55,22 @@ if [[ -n "$OPENWRT_LOCAL_SOURCE" ]]; then
 		echo "Prepared OpenWrt source is not a Git checkout: $OPENWRT_LOCAL_SOURCE" >&2
 		exit 1
 	}
-	git clone --local --no-hardlinks "$OPENWRT_LOCAL_SOURCE" "$OPENWRT_DIR"
-	OPENWRT_COMMIT="$(git -C "$OPENWRT_DIR" rev-parse HEAD)"
+
+	# Prepared candidates contain locally generated integration commits. A
+	# normal local clone also copies every branch and remote-tracking ref; those
+	# refs may point at commits that exist only in another temporary candidate
+	# repository and can make the clone fail before compilation. Transfer only
+	# the exact prepared HEAD that this build was asked to use.
+	prepared_commit="$(git -C "$OPENWRT_LOCAL_SOURCE" rev-parse --verify 'HEAD^{commit}')"
+	mkdir -p "$OPENWRT_DIR"
+	git -C "$OPENWRT_DIR" init -q
+	git -C "$OPENWRT_DIR" fetch --no-tags "$OPENWRT_LOCAL_SOURCE" HEAD
+	git -C "$OPENWRT_DIR" checkout --detach --force FETCH_HEAD
+	[[ "$(git -C "$OPENWRT_DIR" rev-parse HEAD)" == "$prepared_commit" ]] || {
+		echo "Prepared OpenWrt HEAD did not transfer exactly." >&2
+		exit 1
+	}
+	OPENWRT_COMMIT="$prepared_commit"
 else
 	git clone --filter=blob:none --single-branch \
 		--branch "$OPENWRT_BRANCH" \

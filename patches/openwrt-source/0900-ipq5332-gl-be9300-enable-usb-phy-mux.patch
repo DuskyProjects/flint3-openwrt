@@ -1,0 +1,29 @@
+From: DuskyProjects <actions@users.noreply.github.com>
+Subject: [PATCH] qualcommbe: gl-be9300: select the USB side of the shared PHY
+
+Describe the IPQ5332 USB/PCIe PHY mux using the register and value from
+Qualcomm's downstream IPQ5332 device tree. The DWC3 glue selects this
+mux before resetting the controller.
+
+The tcsr syscon starts at 0x01937000, so offset 0x10540 resolves to the
+verified physical register 0x01947540.
+
+---
+ target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+--- a/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts
++++ b/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts
+@@ -486,6 +486,12 @@
+ 	status = "okay";
+ };
+ 
++&usb {
++	qcom,multiplexed-phy;
++	qcom,phy-mux-regs = <&tcsr 0x10540>;
++	status = "okay";
++};
++
+ &usb_dwc {
+ 	status = "okay";
+ };

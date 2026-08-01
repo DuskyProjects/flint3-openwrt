@@ -88,7 +88,8 @@ jobs:
           test -s patch-sources.conf
           test -s scripts/retain-flint3-ramoops.sh
           test -s scripts/test-prepared-source-transfer.sh
-          test -s patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch
+          test -s patches/qualcommbe-6.18/2990-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch
+          test ! -e patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch
           test -s patches/openwrt-source/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch
 
           grep -Fq 'luci-theme-footstrap' packages.required
@@ -117,12 +118,14 @@ jobs:
           grep -Fq 'RAMOOPS-RETAINED' scripts/retain-flint3-ramoops.sh
           grep -Fq 'scripts/retain-flint3-ramoops.sh' scripts/apply-curated-patches.sh
 
-          usb_patch='patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch'
+          usb_patch='patches/qualcommbe-6.18/2990-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch'
+          [[ "$(basename "$usb_patch")" > '2030-arm64-dts-qcom-ipq5332-Add-QPIC-SPI-NAND-controller-.patch' ]]
           grep -Fq 'drivers/usb/dwc3/dwc3-qcom.c' "$usb_patch"
           grep -Fq 'qcom,ipq5332-dwc3", "qcom,snps-dwc3' "$usb_patch"
           grep -Fq 'usb: usb_dwc: usb@8a00000' "$usb_patch"
           grep -Fq 'reg = <0x08a00000 0x100000>' "$usb_patch"
           grep -Fq 'regmap_write(tcsr, 0x10540, 0x1)' "$usb_patch"
+          grep -Fq 'ordered after the existing Qualcomm DTS' "$usb_patch"
           ! grep -Fq 'dwc3-qcom-legacy.c' "$usb_patch"
 
           board_patch='patches/openwrt-source/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch'

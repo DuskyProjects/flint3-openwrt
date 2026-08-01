@@ -9,6 +9,8 @@ on:
       - build.env
       - config.seed
       - packages.required
+      - source.required
+      - patches/**
       - files/**
       - scripts/**
       - .github/workflows/build.yml

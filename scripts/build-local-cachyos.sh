@@ -27,10 +27,8 @@ if ! command -v pacman >/dev/null 2>&1; then
 fi
 
 if [[ "$INSTALL_DEPS" == 1 ]]; then
-  # Do not request Arch's zlib package explicitly. CachyOS installs
-  # zlib-ng-compat, which provides the same headers and ABI but conflicts with
-  # the repository zlib package. The remaining dependencies already require a
-  # compatible zlib provider.
+  # CachyOS uses zlib-ng-compat as the zlib ABI provider. Do not request the
+  # conflicting Arch zlib package explicitly.
   sudo pacman -S --needed --noconfirm \
     base-devel bash bison ccache clang curl diffutils file findutils flex \
     gawk gettext git grep jq libelf ncurses openssl pahole patch perl \
@@ -124,14 +122,12 @@ set +e
 
   bash -n \
     scripts/apply-curated-patches.sh \
-    scripts/apply-source-overlays.sh \
     scripts/build.sh \
     scripts/build-local-cachyos.sh \
     scripts/check-mac80211-source.sh \
     scripts/nightly-build.sh \
     scripts/nightly-or-reuse.sh \
     scripts/privacy-audit.sh \
-    scripts/refresh-patches.sh \
     scripts/retain-flint3-ramoops.sh \
     scripts/self-test.sh \
     scripts/test-prepared-source-transfer.sh
@@ -141,9 +137,6 @@ set +e
   bash scripts/test-prepared-source-transfer.sh
 
   env \
-    CONTROLLED_SINGLE_BUILD=1 \
-    CONTROLLED_BASE_COMMIT="${CONTROLLED_BASE_COMMIT:-60575e4948cc8d5ef8f2a1ec6e992f9c5f25f3a5}" \
-    CONTROLLED_OVERLAY_COMMIT="${CONTROLLED_OVERLAY_COMMIT:-f7bd99463c1f5a45aa063be4e12f7d07bee655f7}" \
     JOBS="$JOBS" \
     NIGHTLY_ROOT="$NIGHTLY_ROOT" \
     DOWNLOAD_CACHE_DIR="$NIGHTLY_ROOT/dl" \
@@ -157,7 +150,7 @@ set -e
 copy_log
 
 if (( build_status != 0 )); then
-  echo "Build failed. Full compiler log saved to: $FINAL_LOG" >&2
+  echo "Build failed. Log saved to: $FINAL_LOG" >&2
   exit "$build_status"
 fi
 
@@ -181,6 +174,7 @@ chmod 0644 "$EXPORT_DIR/sha256sums.txt" "$FINAL_LOG"
 
 echo
 echo "Local Flint 3 build completed."
+echo "Source:      Perceival Flint 3 tree plus curated USB/ramoops patches"
 echo "Sysupgrade: $EXPORT_DIR/flint3-sysupgrade.bin"
 echo "Factory:    $EXPORT_DIR/flint3-full-factory.bin"
 echo "Checksums:  $EXPORT_DIR/sha256sums.txt"

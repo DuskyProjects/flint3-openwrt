@@ -1,8 +1,44 @@
-# GL.iNet Flint 3 / GL-BE9300 with LuCI, Footstrap, and persistent crash logging
 CONFIG_TARGET_qualcommbe=y
 CONFIG_TARGET_qualcommbe_ipq53xx=y
 CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+
+# LuCI and themes. Bootstrap remains available through the luci collection.
 CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_PACKAGE_luci-app-firewall=y
 CONFIG_PACKAGE_luci-theme-footstrap=y
+
+# Traffic management and the accelerated nftables path used on this port.
+CONFIG_PACKAGE_luci-app-sqm=y
+CONFIG_PACKAGE_sqm-scripts=y
+CONFIG_PACKAGE_kmod-sched-cake=y
+CONFIG_PACKAGE_kmod-nft-offload=y
+CONFIG_PACKAGE_kmod-nf-conntrack-netlink=y
+CONFIG_PACKAGE_conntrack=y
+
+# Persistent crash capture. The board DTS already reserves a ramoops region.
 CONFIG_PACKAGE_kmod-ramoops=y
+
+# Generic USB storage support only. No mounts, shares or NAS configuration.
+CONFIG_PACKAGE_block-mount=y
+CONFIG_PACKAGE_kmod-usb3=y
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-exfat=y
+CONFIG_PACKAGE_kmod-fs-ntfs3=y
+CONFIG_PACKAGE_e2fsprogs=y
+CONFIG_PACKAGE_lsblk=y
+
+# On-device diagnostics used during Flint 3 bring-up and regression testing.
+CONFIG_PACKAGE_ethtool=y
+CONFIG_PACKAGE_iperf3=y
+CONFIG_PACKAGE_tcpdump=y
+CONFIG_PACKAGE_iw-full=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_ca-bundle=y
+CONFIG_PACKAGE_jq=y
+
 CONFIG_CCACHE=y

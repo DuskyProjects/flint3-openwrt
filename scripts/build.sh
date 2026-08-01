@@ -15,6 +15,8 @@ SOURCE_REQUIRED_FILE="${SOURCE_REQUIRED_FILE:-$PROJECT_ROOT/source.required}"
 BUILD_VARIANT="${BUILD_VARIANT:-pinned}"
 OPENWRT_LOCAL_SOURCE="${OPENWRT_LOCAL_SOURCE:-}"
 MERGED_SOURCE_RECORD="${MERGED_SOURCE_RECORD:-}"
+DOWNLOAD_CACHE_DIR="${DOWNLOAD_CACHE_DIR:-}"
+CCACHE_MAX_SIZE="${CCACHE_MAX_SIZE:-3G}"
 
 mapfile -t REQUIRED_PACKAGES < <(
 	awk 'NF && $1 !~ /^#/ { print $1 }' "$PROJECT_ROOT/packages.required"
@@ -76,6 +78,16 @@ git -C "$FOOTSTRAP_DIR" checkout --detach "$FOOTSTRAP_COMMIT"
 [[ "$(git -C "$FOOTSTRAP_DIR" rev-parse HEAD)" == "$FOOTSTRAP_COMMIT" ]]
 
 cd "$OPENWRT_DIR"
+
+if [[ -n "$DOWNLOAD_CACHE_DIR" ]]; then
+	mkdir -p "$DOWNLOAD_CACHE_DIR"
+	rm -rf dl
+	ln -s "$DOWNLOAD_CACHE_DIR" dl
+fi
+
+if command -v ccache >/dev/null 2>&1; then
+	ccache --max-size="$CCACHE_MAX_SIZE" >/dev/null
+fi
 
 # Carry reviewed portable patches which are not yet in the selected source.
 # An identical upstream copy is accepted and recorded; a conflicting file with
@@ -152,9 +164,9 @@ done
 ./scripts/diffconfig.sh | tee flint3-build.diffconfig
 
 make download -j"$JOBS"
-if find dl -type f -size 0 -print -quit | grep -q .; then
+if find -L dl -type f -size 0 -print -quit | grep -q .; then
 	echo "Zero-byte source downloads found:" >&2
-	find dl -type f -size 0 -print >&2
+	find -L dl -type f -size 0 -print >&2
 	exit 1
 fi
 
@@ -256,4 +268,7 @@ Footstrap version:  $FOOTSTRAP_VERSION
 SOURCES
 
 sha256sum "$OUTPUT_DIR"/*.bin | tee "$OUTPUT_DIR/IMAGE-SHA256SUMS"
+if command -v ccache >/dev/null 2>&1; then
+	ccache --show-stats || true
+fi
 ls -lh "$OUTPUT_DIR"

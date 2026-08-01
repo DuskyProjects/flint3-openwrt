@@ -36,6 +36,7 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
 merged=0
+replaced=0
 already=0
 kept_base=0
 missing_optional=0
@@ -44,13 +45,28 @@ conflicts=0
 
 while IFS='|' read -r mode path; do
   [[ -n "$mode" && "$mode" != \#* ]] || continue
+
+  required=0
+  replace=0
   case "$mode" in
-    required|optional) ;;
+    required)
+      required=1
+      ;;
+    optional)
+      ;;
+    replace-required)
+      required=1
+      replace=1
+      ;;
+    replace-optional)
+      replace=1
+      ;;
     *)
       echo "Invalid overlay mode '$mode' for $path" >&2
       exit 1
       ;;
   esac
+
   [[ -n "$path" ]] || {
     echo "Empty overlay path." >&2
     exit 1
@@ -63,10 +79,11 @@ while IFS='|' read -r mode path; do
   esac
 
   if ! git -C "$CANDIDATE_SOURCE" cat-file -e "$SECONDARY_COMMIT:$path" 2>/dev/null; then
-    printf 'MISSING-%s\t%s\n' "${mode^^}" "$path" >> "$MANIFEST"
-    if [[ "$mode" == required ]]; then
+    if (( required == 1 )); then
+      printf 'MISSING-REQUIRED\t%s\n' "$path" >> "$MANIFEST"
       missing_required=$((missing_required + 1))
     else
+      printf 'MISSING-OPTIONAL\t%s\n' "$path" >> "$MANIFEST"
       missing_optional=$((missing_optional + 1))
     fi
     continue
@@ -100,6 +117,21 @@ while IFS='|' read -r mode path; do
     continue
   fi
 
+  # Some files are maintained as one coherent series by the secondary source.
+  # For those explicitly declared replace-* in source-overlays.conf, carry the
+  # exact selected revision rather than trying to line-merge two divergent
+  # implementations of the same driver.
+  if (( replace == 1 )); then
+    mkdir -p "$CANDIDATE_SOURCE/$(dirname "$path")"
+    cp "$overlay_file" "$CANDIDATE_SOURCE/$path"
+    git -C "$CANDIDATE_SOURCE" add -- "$path"
+    printf 'REPLACED-%s\t%s\t%s\n' \
+      "$([[ $required == 1 ]] && printf REQUIRED || printf OPTIONAL)" \
+      "$overlay_hash" "$path" >> "$MANIFEST"
+    replaced=$((replaced + 1))
+    continue
+  fi
+
   if [[ "$ancestor_hash" == "$overlay_hash" ]]; then
     printf 'KEEP-BASE\t%s\t%s\n' "$current_hash" "$path" >> "$MANIFEST"
     kept_base=$((kept_base + 1))
@@ -117,13 +149,13 @@ while IFS='|' read -r mode path; do
       "$current_file" "$ancestor_file" "$overlay_file" > "$merged_file"
     merge_status=$?
     set -e
-    if (( merge_status == 1 )); then
-      printf 'CONFLICT\t%s\n' "$path" >> "$MANIFEST"
+
+    # git merge-file returns the number of conflicts, capped at 127. Any
+    # positive status is therefore a content conflict, not an execution error.
+    if (( merge_status > 0 )); then
+      printf 'CONFLICT\t%s\tcount=%d\n' "$path" "$merge_status" >> "$MANIFEST"
       conflicts=$((conflicts + 1))
       continue
-    elif (( merge_status > 1 )); then
-      echo "git merge-file failed for $path with status $merge_status" >&2
-      exit 1
     fi
   fi
 
@@ -135,8 +167,8 @@ while IFS='|' read -r mode path; do
   merged=$((merged + 1))
 done < "$PROJECT_ROOT/source-overlays.conf"
 
-printf '\nSUMMARY merged=%d already=%d kept-base=%d missing-optional=%d missing-required=%d conflicts=%d\n' \
-  "$merged" "$already" "$kept_base" "$missing_optional" "$missing_required" "$conflicts" >> "$MANIFEST"
+printf '\nSUMMARY merged=%d replaced=%d already=%d kept-base=%d missing-optional=%d missing-required=%d conflicts=%d\n' \
+  "$merged" "$replaced" "$already" "$kept_base" "$missing_optional" "$missing_required" "$conflicts" >> "$MANIFEST"
 
 if (( missing_required > 0 || conflicts > 0 )); then
   echo "Source overlay integration was incomplete: missing-required=$missing_required conflicts=$conflicts" >&2
@@ -149,4 +181,4 @@ if ! git -C "$CANDIDATE_SOURCE" diff --cached --quiet; then
   git -C "$CANDIDATE_SOURCE" commit -m "Integrate Flint-specific secondary source changes"
 fi
 
-echo "Source overlays integrated: merged=$merged already=$already kept-base=$kept_base missing-optional=$missing_optional"
+echo "Source overlays integrated: merged=$merged replaced=$replaced already=$already kept-base=$kept_base missing-optional=$missing_optional"

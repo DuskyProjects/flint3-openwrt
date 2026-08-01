@@ -38,8 +38,10 @@ jobs:
         run: |
           set -euo pipefail
           bash -n \
+            scripts/apply-curated-patches.sh \
             scripts/apply-source-overlays.sh \
             scripts/build.sh \
+            scripts/build-local-cachyos.sh \
             scripts/check-mac80211-source.sh \
             scripts/nightly-build.sh \
             scripts/nightly-or-reuse.sh \
@@ -48,8 +50,10 @@ jobs:
             scripts/self-test.sh
 
           shellcheck -S error \
+            scripts/apply-curated-patches.sh \
             scripts/apply-source-overlays.sh \
             scripts/build.sh \
+            scripts/build-local-cachyos.sh \
             scripts/check-mac80211-source.sh \
             scripts/nightly-build.sh \
             scripts/nightly-or-reuse.sh \
@@ -76,20 +80,44 @@ jobs:
           test -s source.required
           test -s source-overlays.conf
           test -s patch-sources.conf
+          test -s patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch
+          test -s patches/openwrt-source/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch
+
           grep -Fq 'luci-theme-footstrap' packages.required
           grep -Fq 'kmod-ramoops' packages.required
           grep -Fq 'kmod-zram' packages.required
-          grep -Fq 'KakatkarAkshay/openwrt' patch-sources.conf
-          grep -Fq 'jhbsz/openwrt-flint3' patch-sources.conf
-          grep -Fq 'openwrt/openwrt' patch-sources.conf
+          grep -Fq 'kakatkar|KakatkarAkshay/openwrt|gl-be9300|required' patch-sources.conf
+          grep -Fq 'jhbsz|jhbsz/openwrt-flint3|main|optional' patch-sources.conf
+          grep -Fq 'openwrt-main|openwrt/openwrt|main|optional' patch-sources.conf
           grep -Fq 'required|target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts' source-overlays.conf
           grep -Fq 'required|package/kernel/rtl837x/src/rtl837x_dsa_ops.c' source-overlays.conf
+
           grep -Fq 'unset BUILD_VARIANT' scripts/build.sh
           grep -Fq 'FIRMWARE_BUILD_LABEL=' scripts/build.sh
           grep -Fq 'BACKPORTS_BUMP_COMMIT=' scripts/nightly-build.sh
+          grep -Fq 'MAX_OVERLAY_HISTORY="${MAX_OVERLAY_HISTORY:-1}"' scripts/nightly-build.sh
+          grep -Fq 'scripts/apply-curated-patches.sh' scripts/nightly-build.sh
+          grep -Fq 'REFRESH_OPTIONAL_PATCHES=' scripts/nightly-build.sh
+          grep -Fq 'REPLACED-REQUIRED' scripts/refresh-patches.sh
+          grep -Fq 'Required patch source' scripts/refresh-patches.sh
+
+          usb_patch='patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch'
+          grep -Fq 'drivers/usb/dwc3/dwc3-qcom.c' "$usb_patch"
+          grep -Fq 'qcom,ipq5332-dwc3", "qcom,snps-dwc3' "$usb_patch"
+          grep -Fq 'reg = <0x08a00000 0x100000>' "$usb_patch"
+          grep -Fq 'regmap_write(tcsr, 0x10540, 0x1)' "$usb_patch"
+          ! grep -Fq 'dwc3-qcom-legacy.c' "$usb_patch"
+
+          board_patch='patches/openwrt-source/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch'
+          grep -Fq '&usb {' "$board_patch"
+          ! grep -Fq 'qcom,phy-mux-regs' "$board_patch"
+
           grep -Fq 'workflow_dispatch:' .github/workflows/build.yml
           ! grep -Eq '^  (push|schedule):' .github/workflows/build.yml
           grep -Fq 'cancel-in-progress: false' .github/workflows/build.yml
+          grep -Fq 'Nothing was flashed and the router was not rebooted.' scripts/build-local-cachyos.sh
+          grep -Fq 'EXPORT_DIR="${EXPORT_DIR:-/mnt/router/flint3-local-build}"' scripts/build-local-cachyos.sh
+
           if grep -Fq 'git -C "$merged_source" merge' scripts/nightly-build.sh; then
             echo 'Whole-tree OpenWrt merges are prohibited.' >&2
             exit 1

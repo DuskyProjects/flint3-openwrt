@@ -30,8 +30,10 @@ kmod-sched-cake
 sqm-scripts
 tcpdump
 
-# Persistent crash capture.
+# Persistent crash capture and generic compressed-RAM swap.
 kmod-ramoops
+kmod-zram
+zram-swap
 
 # Generic USB and removable-storage support. No mounts or sharing services are configured.
 block-mount

@@ -10,7 +10,8 @@ BASE_BRANCH="${BASE_BRANCH:-flint3-be9300}"
 OVERLAY_REPOSITORY="${OVERLAY_REPOSITORY:-KakatkarAkshay/openwrt}"
 OVERLAY_BRANCH="${OVERLAY_BRANCH:-gl-be9300}"
 MAX_HISTORY="${MAX_HISTORY:-3}"
-MAX_BUILD_ATTEMPTS="${MAX_BUILD_ATTEMPTS:-12}"
+MAX_OVERLAY_HISTORY="${MAX_OVERLAY_HISTORY:-1}"
+MAX_BUILD_ATTEMPTS="${MAX_BUILD_ATTEMPTS:-8}"
 JOBS="${JOBS:-4}"
 BACKPORTS_BUMP_COMMIT="${BACKPORTS_BUMP_COMMIT:-509af829c650cb29ebe907e2216b5d648a9b15e6}"
 
@@ -96,12 +97,14 @@ fi
 awk -F'|' '!seen[$2]++' "$BASE_HISTORY_FILE" > "$BASE_HISTORY_FILE.tmp"
 mv "$BASE_HISTORY_FILE.tmp" "$BASE_HISTORY_FILE"
 
-git -C "$OVERLAY_MIRROR" log --first-parent --max-count="$MAX_HISTORY" \
+# The current Kakatkar head is a required coherent series. Do not silently fall
+# back to older overlay revisions when the current series fails.
+git -C "$OVERLAY_MIRROR" log --first-parent --max-count="$MAX_OVERLAY_HISTORY" \
   --format='%ct|%H' "origin/$OVERLAY_BRANCH" > "$OVERLAY_HISTORY_FILE"
 LATEST_OVERLAY_COMMIT="$(awk -F'|' 'NR == 1 { print $2 }' "$OVERLAY_HISTORY_FILE")"
 
 [[ -s "$BASE_HISTORY_FILE" && -s "$OVERLAY_HISTORY_FILE" ]] || {
-  echo "Could not enumerate recent Flint 3 source revisions." >&2
+  echo "Could not enumerate Flint 3 source revisions." >&2
   exit 1
 }
 
@@ -115,9 +118,8 @@ while IFS='|' read -r base_time base_commit; do
 done < "$BASE_HISTORY_FILE"
 sort -t'|' -k1,1nr -k2,2nr -k4,4nr -o "$PAIR_FILE" "$PAIR_FILE"
 
-# Always test the newest pair first and the pinned known-good base second. This
-# prevents several failing recent documentation/metadata commits from consuming
-# the attempt budget before the proven base is reached.
+# Always test the newest base first and the pinned base second while keeping the
+# same required current Kakatkar series.
 ORDERED_PAIR_FILE="$NIGHTLY_ROOT/source-pairs-ordered.txt"
 {
   awk -F'|' -v b="$LATEST_BASE_COMMIT" -v o="$LATEST_OVERLAY_COMMIT" '$3 == b && $5 == o' "$PAIR_FILE"
@@ -131,11 +133,12 @@ LATEST_LUCI_COMMIT="$(latest_head "$LUCI_FEED_REPOSITORY" "$PINNED_LUCI_COMMIT")
 LATEST_FOOTSTRAP_COMMIT="$(latest_head "$FOOTSTRAP_REPOSITORY" "$PINNED_FOOTSTRAP_COMMIT")"
 LATEST_FOOTSTRAP_VERSION="0.0.0_git${DATE_UTC}_${LATEST_FOOTSTRAP_COMMIT:0:8}"
 
-# Ordered from newest/most integrated to the conservative known-good fallback.
+# Every strategy includes required Kakatkar source overlays, required Kakatkar
+# patch intake, and the curated USB migration. Only optional sources and feeds
+# vary between strategies.
 STRATEGIES=(
-  'integrated-refreshed-latest|1|1|latest'
-  'integrated-curated-known-good|1|0|known-good'
-  'base-curated-known-good|0|0|known-good'
+  'integrated-all-latest|1|latest'
+  'integrated-required-known-good|0|known-good'
 )
 SOURCE_TIERS=(
   'current|0'
@@ -156,6 +159,7 @@ successful_footstrap=''
 successful_output=''
 successful_patch_manifest=''
 successful_overlay_manifest=''
+successful_curated_manifest=''
 successful_archive_url=''
 
 while IFS='|' read -r _score _base_time base_commit _overlay_time overlay_commit; do
@@ -172,7 +176,7 @@ while IFS='|' read -r _score _base_time base_commit _overlay_time overlay_commit
     source_variant="$ATTEMPT_ROOT/source-$candidate_id-$source_tier_name"
     rm -rf "$source_variant"
     git clone --local --no-hardlinks "$base_candidate" "$source_variant"
-    git -C "$source_variant" config user.name 'DuskyProjects Nightly Builder'
+    git -C "$source_variant" config user.name 'DuskyProjects Builder'
     git -C "$source_variant" config user.email 'actions@users.noreply.github.com'
 
     if [[ "$revert_backports" == 1 ]]; then
@@ -196,34 +200,32 @@ while IFS='|' read -r _score _base_time base_commit _overlay_time overlay_commit
       if (( attempt >= MAX_BUILD_ATTEMPTS )); then
         break 3
       fi
-      IFS='|' read -r strategy_name apply_overlays refresh_external feed_choice <<< "$strategy"
+      IFS='|' read -r strategy_name refresh_optional feed_choice <<< "$strategy"
 
       integrated_source="$ATTEMPT_ROOT/integrated-$candidate_id-$source_tier_name-$strategy_name"
       overlay_manifest="$ATTEMPT_ROOT/overlays-$candidate_id-$source_tier_name-$strategy_name.txt"
       queue_root="$ATTEMPT_ROOT/queue-$candidate_id-$source_tier_name-$strategy_name"
       patch_manifest="$ATTEMPT_ROOT/patches-$candidate_id-$source_tier_name-$strategy_name.txt"
+      curated_manifest="$ATTEMPT_ROOT/curated-$candidate_id-$source_tier_name-$strategy_name.txt"
       rm -rf "$integrated_source" "$queue_root"
       git clone --local --no-hardlinks "$source_variant" "$integrated_source"
 
-      if [[ "$apply_overlays" == 1 ]]; then
-        if ! bash "$PROJECT_ROOT/scripts/apply-source-overlays.sh" \
-          "$integrated_source" "$overlay_commit" "$overlay_manifest"; then
-          echo "Selective Flint overlay integration was not usable for $candidate_id/$source_tier_name."
-          continue
-        fi
-      else
-        {
-          printf 'SOURCE OVERLAY MANIFEST\n'
-          printf 'secondary-commit=%s\n' "$overlay_commit"
-          printf 'tier=base-only\n'
-          printf 'SUMMARY merged=0 already=0 kept-base=0 missing-optional=0 missing-required=0 conflicts=0\n'
-        } > "$overlay_manifest"
+      if ! bash "$PROJECT_ROOT/scripts/apply-source-overlays.sh" \
+        "$integrated_source" "$overlay_commit" "$overlay_manifest"; then
+        echo "Required Flint source integration was not usable for $candidate_id/$source_tier_name."
+        continue
       fi
 
-      if ! REFRESH_EXTERNAL_PATCHES="$refresh_external" \
+      if ! REFRESH_OPTIONAL_PATCHES="$refresh_optional" \
         bash "$PROJECT_ROOT/scripts/refresh-patches.sh" \
           "$integrated_source" "$PATCH_SOURCE_CACHE" "$queue_root" "$patch_manifest"; then
-        echo "Patch intake was not usable for $candidate_id/$source_tier_name/$strategy_name."
+        echo "Required patch intake was not usable for $candidate_id/$source_tier_name/$strategy_name."
+        continue
+      fi
+
+      if ! bash "$PROJECT_ROOT/scripts/apply-curated-patches.sh" \
+        "$integrated_source" "$curated_manifest"; then
+        echo "Curated Flint patches were not usable for $candidate_id/$source_tier_name/$strategy_name."
         continue
       fi
 
@@ -277,8 +279,8 @@ SOURCES
 
       if env \
         OPENWRT_LOCAL_SOURCE="$integrated_source" \
-        OPENWRT_REPOSITORY="$BASE_REPOSITORY with selective Flint integration from $OVERLAY_REPOSITORY" \
-        OPENWRT_BRANCH="$BASE_BRANCH + selective $OVERLAY_BRANCH integration" \
+        OPENWRT_REPOSITORY="$BASE_REPOSITORY with required Flint integration from $OVERLAY_REPOSITORY" \
+        OPENWRT_BRANCH="$BASE_BRANCH + required $OVERLAY_BRANCH integration" \
         OPENWRT_COMMIT="$(git -C "$integrated_source" rev-parse HEAD)" \
         PACKAGES_FEED_COMMIT="$packages_commit" \
         LUCI_FEED_COMMIT="$luci_commit" \
@@ -298,7 +300,7 @@ SOURCES
         successful_overlay="$overlay_commit"
         successful_source_tier="$source_tier_name"
         successful_strategy="$strategy_name"
-        successful_patch_tier="$([[ "$refresh_external" == 1 ]] && printf refreshed || printf curated)"
+        successful_patch_tier="$([[ "$refresh_optional" == 1 ]] && printf required-plus-optional || printf required-only)"
         successful_feed_tier="$feed_choice"
         successful_packages="$packages_commit"
         successful_luci="$luci_commit"
@@ -306,6 +308,7 @@ SOURCES
         successful_output="$output_dir"
         successful_patch_manifest="$patch_manifest"
         successful_overlay_manifest="$overlay_manifest"
+        successful_curated_manifest="$curated_manifest"
         successful_archive_url="$archive_url"
         tail -n 80 "$log_file"
         break 3
@@ -318,7 +321,7 @@ SOURCES
 done < "$PAIR_FILE"
 
 (( success == 1 )) || {
-  echo "No tested Flint-specific source/feed/patch combination compiled successfully." >&2
+  echo "No required Flint source/feed/patch combination compiled successfully." >&2
   exit 1
 }
 
@@ -358,10 +361,10 @@ CHANGELOG_FILE="$PROJECT_ROOT/release-notes.md"
   printf '<!-- luci-source: %s -->\n' "$successful_luci"
   printf '<!-- footstrap-source: %s -->\n\n' "$successful_footstrap"
   printf '# Flint 3 integrated build — %s\n\n' "$DATE_DISPLAY"
-  printf 'Newest controlled Flint-specific source combination that passed source preflight, overlay integration, patch intake, privacy checks, package validation, factory-image validation, and compilation.\n\n'
+  printf 'Required current Kakatkar source and patch series, curated flat DWC3 migration, and the selected Perceival base passed source preflight, privacy checks, package validation, factory-image validation, and compilation.\n\n'
   printf '## Selected inputs\n\n'
   printf -- '- Perceival base: `%s@%s`\n' "$BASE_REPOSITORY" "$successful_base"
-  printf -- '- Kakatkar integration source: `%s@%s`\n' "$OVERLAY_REPOSITORY" "$successful_overlay"
+  printf -- '- Required Kakatkar source: `%s@%s`\n' "$OVERLAY_REPOSITORY" "$successful_overlay"
   printf -- '- Source tier: `%s`\n' "$successful_source_tier"
   printf -- '- Strategy: `%s`\n' "$successful_strategy"
   printf -- '- Patch tier: `%s`\n' "$successful_patch_tier"
@@ -373,9 +376,9 @@ CHANGELOG_FILE="$PROJECT_ROOT/release-notes.md"
 
   printf '## Changelog\n\n'
   append_commit_changelog "$BASE_MIRROR" "$previous_base" "$successful_base" "Perceival base changes"
-  append_commit_changelog "$OVERLAY_MIRROR" "$previous_overlay" "$successful_overlay" "Kakatkar integration-source changes"
+  append_commit_changelog "$OVERLAY_MIRROR" "$previous_overlay" "$successful_overlay" "Required Kakatkar changes"
 
-  printf '### Flint-specific source integration\n\n'
+  printf '### Required Flint source integration\n\n'
   if [[ -s "$successful_overlay_manifest" ]]; then
     grep -E '^(MERGED|ALREADY|KEEP-BASE|MISSING|CONFLICT|SUMMARY)' "$successful_overlay_manifest" |
       sed 's/^/- `/' | sed 's/$/`/'
@@ -384,12 +387,21 @@ CHANGELOG_FILE="$PROJECT_ROOT/release-notes.md"
   fi
   printf '\n\n'
 
-  printf '### Refreshed patch intake\n\n'
+  printf '### Required and optional patch intake\n\n'
   if [[ -s "$successful_patch_manifest" ]]; then
-    grep -E '^(SOURCE|IMPORTED|ALREADY|EQUIVALENT|CONFLICT|SUMMARY)' "$successful_patch_manifest" |
+    grep -E '^(SOURCE|SOURCE-|IMPORTED|REPLACED|ALREADY|EQUIVALENT|CONFLICT|SUMMARY)' "$successful_patch_manifest" |
       sed 's/^/- `/' | sed 's/$/`/'
   else
     printf 'No patch manifest was generated.\n'
+  fi
+  printf '\n\n'
+
+  printf '### Curated Flint patches\n\n'
+  if [[ -s "$successful_curated_manifest" ]]; then
+    grep -E '^(SOURCE|KERNEL|SUMMARY)' "$successful_curated_manifest" |
+      sed 's/^/- `/' | sed 's/$/`/'
+  else
+    printf 'No curated-patch manifest was generated.\n'
   fi
   printf '\n\n'
 

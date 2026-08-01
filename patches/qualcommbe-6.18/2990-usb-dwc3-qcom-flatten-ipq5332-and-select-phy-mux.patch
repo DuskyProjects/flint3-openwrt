@@ -7,7 +7,8 @@ qcom,snps-dwc3 binding used by the current Qualcomm glue driver.
 IPQ5332 shares the SuperSpeed pads with PCIe. Qualcomm-derived sources
 select USB through TCSR register 0x01947540 before the USB controller
 reset. Do the same in dwc3-qcom so boot does not depend on inherited
-bootloader state.
+bootloader state. Only boards carrying qcom,multiplexed-phy request the
+mux write, matching the downstream board opt-in behavior.
 
 This patch is intentionally ordered after the existing Qualcomm DTS
 series, including the IPQ5332 QPIC additions, so those patches can still
@@ -25,7 +26,7 @@ match the legacy USB node used as their trailing context.
  #include <linux/interconnect.h>
  #include <linux/platform_device.h>
  #include <linux/phy/phy.h>
-@@ -603,6 +605,31 @@ struct dwc3_glue_ops dwc3_qcom_glue_ops = {
+@@ -603,6 +605,34 @@ struct dwc3_glue_ops dwc3_qcom_glue_ops = {
  	.pre_run_stop	= dwc3_qcom_run_stop_notifier,
  };
  
@@ -34,8 +35,12 @@ match the legacy USB node used as their trailing context.
 +	struct regmap *tcsr;
 +	int ret;
 +
-+	if (!of_device_is_compatible(dev->of_node, "qcom,ipq5332-dwc3"))
++	if (!of_property_read_bool(dev->of_node, "qcom,multiplexed-phy"))
 +		return 0;
++
++	if (!of_device_is_compatible(dev->of_node, "qcom,ipq5332-dwc3"))
++		return dev_err_probe(dev, -EINVAL,
++				     "multiplexed PHY is unsupported on this controller\n");
 +
 +	tcsr = syscon_regmap_lookup_by_compatible("qcom,tcsr-ipq5332");
 +	if (IS_ERR(tcsr))
@@ -57,7 +62,7 @@ match the legacy USB node used as their trailing context.
  static int dwc3_qcom_probe(struct platform_device *pdev)
  {
  	struct dwc3_probe_data	probe_data = {};
-@@ -624,6 +651,10 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+@@ -624,6 +654,10 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  
  	qcom->dev = &pdev->dev;
  

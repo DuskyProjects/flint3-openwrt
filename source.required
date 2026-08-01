@@ -1,0 +1,26 @@
+# Critical commits that the pinned OpenWrt source must contain.
+# Format: commit<TAB>description
+
+2c185182e768d88dafb8ebc01afe5d690fb12f5e	IPQ5332 and QCN9274 ath12k support
+6f1965086a81c61ea573a52765c3ea60c4f759a9	mixed-bus ath12k MLO groups
+93cd8c49b997c4a3b987139be9448863bcab07e8	per-station pending-frame flush
+b410ae4146015188fe8767fe5685332520296c05	legacy IPQ5332 firmware support
+4a8e99823eb2d599d0e4a0a2294a97f0771f9b6	GL-BE9300 ath12k board data
+e08f459194800606496299ead551f6a6f89524f6	GL-BE9300 board support
+715decfa7c05be94a53407a1bbd191a50c4457d5	RTL8372N SerDes lane swaps
+04270fa654c9a32d530f9ca2a3d74c2a074cec24	eMMC calibration data and MAC layout
+4aede5d45f58949b6034d48a0eed1c49fc6e66f3	known-good regulatory database selection
+dd51cb6c30d465fadf290cb947ff0f430f0706b0	factory regulatory country extraction
+0ff73ad7082683aef5de4d3adeabec19a7c3ef70	bootloader-compatible FIT configuration name
+78eea1ae432afca2a5c25748cb35745791755a3f	correct physical LAN port labels
+93b63c5db519e31175cfbc45fb9f2b2055208776	PPE DSA checksum and GSO fallback
+0579b27fd14448c7742bac77796325148c5401bb	RTL837x 802.1Q CPU tagging
+7948bd0f52b3a2de49aecd76afc56d25ba548185	hostapd per-BSS unexpected-frame dispatch
+521977a363c512a108d2449e3307cd64861bc96a	IPQ5332 AP_VLAN support
+fb2d2bf6aa6b45da73495a7168510a4640031592	late Wi-Fi PHY setup retry
+0cdbaeb166cc835da44b94aaaac1fad6f92243ca	stable factory-derived Wi-Fi BSSIDs
+c0d551f976ba0cf0dd6162189bf64f3f6332ceb9	fan and thermal-zone support
+48dedb9c03ae0a6297be0c43807969644d618fed	ramoops crash-record reservation
+d07331650f091834bb7d778e78112da95adef1e8	secondary AP operation after DFS CAC
+2f312227d3f938756a7f8694f08b13109bf55e2f	QSDK-compatible factory image
+42e2bbd5555dd6dcfa15691a3b84b956c1ec5d4c	tested stock-firmware restore path

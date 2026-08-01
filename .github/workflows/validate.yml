@@ -47,6 +47,7 @@ jobs:
             scripts/nightly-or-reuse.sh \
             scripts/privacy-audit.sh \
             scripts/refresh-patches.sh \
+            scripts/retain-flint3-ramoops.sh \
             scripts/self-test.sh
 
           shellcheck -S error \
@@ -59,6 +60,7 @@ jobs:
             scripts/nightly-or-reuse.sh \
             scripts/privacy-audit.sh \
             scripts/refresh-patches.sh \
+            scripts/retain-flint3-ramoops.sh \
             scripts/self-test.sh
 
           sh -n \
@@ -80,7 +82,9 @@ jobs:
           test -s source.required
           test -s source-overlays.conf
           test -s patch-sources.conf
+          test -s scripts/retain-flint3-ramoops.sh
           test -s patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch
+          test -s patches/openwrt-source/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch
 
           grep -Fq 'luci-theme-footstrap' packages.required
           grep -Fq 'kmod-ramoops' packages.required
@@ -88,7 +92,7 @@ jobs:
           grep -Fq 'kakatkar|KakatkarAkshay/openwrt|gl-be9300|required' patch-sources.conf
           grep -Fq 'jhbsz|jhbsz/openwrt-flint3|main|optional' patch-sources.conf
           grep -Fq 'openwrt-main|openwrt/openwrt|main|optional' patch-sources.conf
-          grep -Fq 'required|target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts' source-overlays.conf
+          grep -Fq 'replace-required|target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts' source-overlays.conf
           grep -Fq 'replace-required|package/kernel/rtl837x/src/rtl837x_common.h' source-overlays.conf
           grep -Fq 'replace-required|package/kernel/rtl837x/src/rtl837x_dsa_ops.c' source-overlays.conf
 
@@ -101,7 +105,10 @@ jobs:
           grep -Fq 'REPLACED-REQUIRED' scripts/refresh-patches.sh
           grep -Fq 'Required patch source' scripts/refresh-patches.sh
           grep -Fq 'replace-required' scripts/apply-source-overlays.sh
-          grep -Fq 'positive status is therefore a content conflict' scripts/apply-source-overlays.sh
+          grep -Fq 'Any positive status is therefore a content conflict' scripts/apply-source-overlays.sh
+          grep -Fq 'ramoops@4da00000 {' scripts/retain-flint3-ramoops.sh
+          grep -Fq 'RAMOOPS-RETAINED' scripts/retain-flint3-ramoops.sh
+          grep -Fq 'scripts/retain-flint3-ramoops.sh' scripts/apply-curated-patches.sh
 
           usb_patch='patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch'
           grep -Fq 'drivers/usb/dwc3/dwc3-qcom.c' "$usb_patch"
@@ -110,6 +117,10 @@ jobs:
           grep -Fq 'reg = <0x08a00000 0x100000>' "$usb_patch"
           grep -Fq 'regmap_write(tcsr, 0x10540, 0x1)' "$usb_patch"
           ! grep -Fq 'dwc3-qcom-legacy.c' "$usb_patch"
+
+          board_patch='patches/openwrt-source/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch'
+          grep -Fq '&usb {' "$board_patch"
+          ! grep -Fq 'qcom,phy-mux-regs' "$board_patch"
 
           grep -Fq 'workflow_dispatch:' .github/workflows/build.yml
           ! grep -Eq '^  (push|schedule):' .github/workflows/build.yml

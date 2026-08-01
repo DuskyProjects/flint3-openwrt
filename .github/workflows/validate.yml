@@ -9,6 +9,7 @@ on:
       - config.seed
       - packages.required
       - source.required
+      - source-overlays.conf
       - patch-sources.conf
       - patches/**
       - files/**
@@ -20,6 +21,7 @@ on:
       - config.seed
       - packages.required
       - source.required
+      - source-overlays.conf
       - patch-sources.conf
       - patches/**
       - files/**
@@ -39,6 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           bash -n \
+            scripts/apply-source-overlays.sh \
             scripts/build.sh \
             scripts/nightly-build.sh \
             scripts/nightly-or-reuse.sh \
@@ -54,21 +57,25 @@ jobs:
 
           bash scripts/privacy-audit.sh
 
-      - name: Validate reserved OpenWrt variables
-        run: |
-          set -euo pipefail
-          grep -Fq 'unset BUILD_VARIANT' scripts/build.sh
-          grep -Fq 'FIRMWARE_BUILD_LABEL=' scripts/build.sh
-
-      - name: Validate required manifests
+      - name: Validate required manifests and integration guards
         run: |
           set -euo pipefail
           test -s packages.required
           test -s source.required
+          test -s source-overlays.conf
           test -s patch-sources.conf
           grep -Fq 'luci-theme-footstrap' packages.required
           grep -Fq 'kmod-ramoops' packages.required
           grep -Fq 'kmod-zram' packages.required
+          grep -Fq 'KakatkarAkshay/openwrt' patch-sources.conf
           grep -Fq 'jhbsz/openwrt-flint3' patch-sources.conf
           grep -Fq 'openwrt/openwrt' patch-sources.conf
+          grep -Fq 'target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts' source-overlays.conf
+          grep -Fq 'package/kernel/rtl837x/src/rtl837x_dsa_ops.c' source-overlays.conf
+          grep -Fq 'unset BUILD_VARIANT' scripts/build.sh
+          grep -Fq 'FIRMWARE_BUILD_LABEL=' scripts/build.sh
+          if grep -Fq 'git -C "$merged_source" merge' scripts/nightly-build.sh; then
+            echo 'Whole-tree OpenWrt merges are prohibited.' >&2
+            exit 1
+          fi
           test "$(find patches -type f -name '*.patch' | wc -l)" -ge 1

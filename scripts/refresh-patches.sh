@@ -42,7 +42,7 @@ PATCH_ROOTS=(
   target/linux/generic/pending-6.18
   package/network/services/hostapd/patches
 )
-KEYWORDS='ath12k|ipq5332|qcn9274|gl-be9300|rtl8372|rtl837x|qcom.*ppe|\bppe\b|edma|multi[- ]link|\bmlo\b|remoteproc|\bpas\b|qrtr|dfs|ap_vlan|wds'
+KEYWORDS='ath12k|ipq5332|qcn9274|gl-be9300|rtl8372|rtl837x|qcom.*ppe|\bppe\b|edma|multi[- ]link|\bmlo\b|remoteproc|\bpas\b|qrtr|dfs|ap_vlan|wds|switchdev|\bfdb\b|\bmdb\b|flow[_ -]?offload|flowtable|netfilter|\bppp\b|pppoe|tunnel|\blwt\b|ip6_tunnel'
 
 repository_url() {
   local repository="$1"
@@ -130,10 +130,20 @@ while IFS='|' read -r id repository branch policy; do
     [[ -d "$destination/$root" ]] || continue
     while IFS= read -r patch; do
       relative="${patch#$destination/}"
+      selected=0
 
-      if [[ "$policy" == optional ]] && \
-         [[ "$relative" != package/kernel/mac80211/patches/ath12k/* ]] && \
-         ! grep -Eiq "$KEYWORDS" "$patch"; then
+      if [[ "$policy" == required ]] && {
+           [[ "$relative" == package/kernel/mac80211/patches/ath12k/* ]] ||
+           [[ "$relative" == target/linux/qualcommbe/patches-6.18/* ]];
+         }; then
+        selected=1
+      elif [[ "$policy" == optional && "$relative" == package/kernel/mac80211/patches/ath12k/* ]]; then
+        selected=1
+      elif grep -Eiq "$KEYWORDS" "$patch"; then
+        selected=1
+      fi
+
+      if (( selected == 0 )); then
         ignored=$((ignored + 1))
         continue
       fi
@@ -188,7 +198,7 @@ while IFS='|' read -r id repository branch policy; do
 
   if [[ "$policy" == required && "$source_candidates" -eq 0 ]]; then
     printf 'SOURCE-EMPTY\t%s\n' "$id" >> "$MANIFEST"
-    echo "Required patch source '$id' exposed no patch files in the selected roots." >&2
+    echo "Required patch source '$id' exposed no selected Flint networking patches." >&2
     exit 1
   fi
 done < "$PROJECT_ROOT/patch-sources.conf"

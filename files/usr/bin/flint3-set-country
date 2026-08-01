@@ -1,0 +1,24 @@
+#!/bin/sh
+
+country="$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')"
+case "$country" in
+	[A-Z][A-Z]) ;;
+	*)
+		echo "Usage: flint3-set-country <two-letter ISO country code>" >&2
+		exit 2
+		;;
+esac
+
+radios="$(uci -q show wireless | sed -n "s/^wireless\.\([^.=]*\)=wifi-device$/\1/p")"
+[ -n "$radios" ] || {
+	echo "No wireless radio sections exist yet." >&2
+	exit 1
+}
+
+for radio in $radios; do
+	uci set "wireless.$radio.country=$country"
+done
+uci commit wireless
+
+echo "Set country $country on all wireless radios."
+echo "No SSID, password, radio state or network membership was changed."

@@ -54,6 +54,12 @@ jobs:
 
           bash scripts/privacy-audit.sh
 
+      - name: Validate reserved OpenWrt variables
+        run: |
+          set -euo pipefail
+          grep -Fq 'unset BUILD_VARIANT' scripts/build.sh
+          grep -Fq 'FIRMWARE_BUILD_LABEL=' scripts/build.sh
+
       - name: Validate required manifests
         run: |
           set -euo pipefail

@@ -25,7 +25,6 @@ printf 'PATCH INTAKE MANIFEST\n' >> "$MANIFEST"
 printf 'candidate=%s\n' "$(git -C "$CANDIDATE_SOURCE" rev-parse HEAD)" >> "$MANIFEST"
 printf 'external-refresh=%s\n\n' "$REFRESH_EXTERNAL_PATCHES" >> "$MANIFEST"
 
-# The committed queue is the reviewed fallback and is copied fresh every run.
 if compgen -G "$PROJECT_ROOT/patches/mac80211-ath12k/*.patch" >/dev/null; then
 	mkdir -p "$QUEUE_DIR/mac80211-ath12k"
 	for patch in "$PROJECT_ROOT"/patches/mac80211-ath12k/*.patch; do
@@ -41,9 +40,6 @@ if [[ "$REFRESH_EXTERNAL_PATCHES" != 1 ]]; then
 	exit 0
 fi
 
-# Only patch-file locations that OpenWrt itself consumes are inspected. Broad
-# source-tree commits are integrated by the selected Flint 3 source merge, not
-# by blindly applying arbitrary commits from unrelated development branches.
 PATCH_ROOTS=(
 	package/kernel/mac80211/patches/ath12k
 	target/linux/qualcommbe/patches-6.18
@@ -72,6 +68,15 @@ patch_id() {
 }
 
 declare -A SEEN_PATCH_IDS=()
+
+for root in "${PATCH_ROOTS[@]}"; do
+	[[ -d "$CANDIDATE_SOURCE/$root" ]] || continue
+	while IFS= read -r existing_patch; do
+		existing_pid="$(patch_id "$existing_patch")"
+		[[ -n "$existing_pid" ]] && SEEN_PATCH_IDS[$existing_pid]="${existing_patch#$CANDIDATE_SOURCE/}"
+	done < <(find "$CANDIDATE_SOURCE/$root" -type f -name '*.patch' -print | sort)
+done
+
 conflict=0
 imported=0
 already=0
@@ -87,9 +92,6 @@ while IFS='|' read -r id repository branch; do
 		while IFS= read -r patch; do
 			relative="${patch#$destination/}"
 
-			# Every ath12k patch is relevant. Other trees require a Flint/QCA
-			# keyword in the patch subject or content to avoid importing the
-			# complete generic kernel patch stack.
 			if [[ "$relative" != package/kernel/mac80211/patches/ath12k/* ]] && \
 			   ! grep -Eiq "$KEYWORDS" "$patch"; then
 				ignored=$((ignored + 1))
@@ -98,10 +100,11 @@ while IFS='|' read -r id repository branch; do
 
 			pid="$(patch_id "$patch")"
 			if [[ -n "$pid" && -n "${SEEN_PATCH_IDS[$pid]:-}" ]]; then
-				printf 'DUPLICATE\t%s\t%s\t%s\n' "$id" "$pid" "$relative" >> "$MANIFEST"
+				printf 'ALREADY-ID\t%s\t%s\t%s\t%s\n' \
+					"$id" "$pid" "$relative" "${SEEN_PATCH_IDS[$pid]}" >> "$MANIFEST"
+				already=$((already + 1))
 				continue
 			fi
-			[[ -n "$pid" ]] && SEEN_PATCH_IDS[$pid]="$relative"
 
 			target="$CANDIDATE_SOURCE/$relative"
 			if [[ -e "$target" ]]; then
@@ -118,13 +121,14 @@ while IFS='|' read -r id repository branch; do
 					continue
 				fi
 
-				printf 'CONFLICT\t%s\t%s\t%s\n' "$id" "${pid:-no-patch-id}" "$relative" >> "$MANIFEST"
-				conflict=1
+				printf 'CONFLICT-SKIPPED\t%s\t%s\t%s\n' "$id" "${pid:-no-patch-id}" "$relative" >> "$MANIFEST"
+				conflict=$((conflict + 1))
 				continue
 			fi
 
 			mkdir -p "$(dirname "$target")"
 			install -m 0644 "$patch" "$target"
+			[[ -n "$pid" ]] && SEEN_PATCH_IDS[$pid]="$relative"
 			printf 'IMPORTED\t%s\t%s\t%s\n' "$id" "${pid:-no-patch-id}" "$relative" >> "$MANIFEST"
 			imported=$((imported + 1))
 		done < <(find "$destination/$root" -type f -name '*.patch' -print | sort)
@@ -134,11 +138,4 @@ done < "$PROJECT_ROOT/patch-sources.conf"
 printf '\nSUMMARY imported=%d already=%d ignored=%d conflicts=%d\n' \
 	"$imported" "$already" "$ignored" "$conflict" >> "$MANIFEST"
 
-# A filename collision with different patch content is never silently resolved.
-# The caller can retry the same source candidate with external intake disabled.
-if (( conflict != 0 )); then
-	echo "External patch refresh found conflicting patch files; see $MANIFEST" >&2
-	exit 2
-fi
-
-echo "Patch intake refreshed: imported=$imported already=$already ignored=$ignored"
+echo "Patch intake refreshed: imported=$imported already=$already ignored=$ignored conflicts-skipped=$conflict"

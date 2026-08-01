@@ -7,6 +7,8 @@ SOURCE_CACHE="${2:?usage: refresh-patches.sh <candidate-source> <source-cache> <
 QUEUE_DIR="${3:?usage: refresh-patches.sh <candidate-source> <source-cache> <queue-dir> <manifest>}"
 MANIFEST="${4:?usage: refresh-patches.sh <candidate-source> <source-cache> <queue-dir> <manifest>}"
 REFRESH_OPTIONAL_PATCHES="${REFRESH_OPTIONAL_PATCHES:-${REFRESH_EXTERNAL_PATCHES:-1}}"
+PINNED_REQUIRED_PATCH_SOURCE_ID="${PINNED_REQUIRED_PATCH_SOURCE_ID:-kakatkar}"
+PINNED_REQUIRED_PATCH_SOURCE_COMMIT="${PINNED_REQUIRED_PATCH_SOURCE_COMMIT:-$(git -C "$CANDIDATE_SOURCE" config --get nightly.overlayCommit 2>/dev/null || true)}"
 
 [[ -d "$CANDIDATE_SOURCE/.git" ]] || {
   echo "Candidate source is not a Git checkout: $CANDIDATE_SOURCE" >&2
@@ -23,7 +25,9 @@ mkdir -p "$QUEUE_DIR" "$SOURCE_CACHE" "$(dirname "$MANIFEST")"
 
 printf 'PATCH INTAKE MANIFEST\n' >> "$MANIFEST"
 printf 'candidate-before=%s\n' "$(git -C "$CANDIDATE_SOURCE" rev-parse HEAD)" >> "$MANIFEST"
-printf 'optional-refresh=%s\n\n' "$REFRESH_OPTIONAL_PATCHES" >> "$MANIFEST"
+printf 'optional-refresh=%s\n' "$REFRESH_OPTIONAL_PATCHES" >> "$MANIFEST"
+printf 'pinned-required-source=%s@%s\n\n' \
+  "$PINNED_REQUIRED_PATCH_SOURCE_ID" "${PINNED_REQUIRED_PATCH_SOURCE_COMMIT:-branch-head}" >> "$MANIFEST"
 
 if compgen -G "$PROJECT_ROOT/patches/mac80211-ath12k/*.patch" >/dev/null; then
   mkdir -p "$QUEUE_DIR/mac80211-ath12k"
@@ -53,17 +57,23 @@ repository_url() {
 }
 
 clone_sparse_source() {
-  local id="$1" repository="$2" branch="$3" destination="$4" url
+  local id="$1" repository="$2" branch="$3" destination="$4" revision="$5" url
   url="$(repository_url "$repository")"
+
   if [[ ! -d "$destination/.git" ]]; then
-    git clone --depth=1 --filter=blob:none --sparse --single-branch \
-      --branch "$branch" "$url" "$destination"
+    rm -rf "$destination"
+    mkdir -p "$destination"
+    git -C "$destination" init -q
+    git -C "$destination" remote add origin "$url"
+    git -C "$destination" sparse-checkout init --no-cone
   else
     git -C "$destination" remote set-url origin "$url"
-    git -C "$destination" fetch --depth=1 origin "$branch"
-    git -C "$destination" checkout --detach FETCH_HEAD
   fi
+
+  git -C "$destination" fetch --depth=1 --filter=blob:none origin "$revision"
+  git -C "$destination" checkout --detach --force FETCH_HEAD
   git -C "$destination" sparse-checkout set --no-cone "${PATCH_ROOTS[@]}"
+  git -C "$destination" clean -ffd >/dev/null
 }
 
 patch_id() {
@@ -111,17 +121,30 @@ while IFS='|' read -r id repository branch policy; do
       ;;
   esac
 
+  revision="$branch"
+  if [[ "$id" == "$PINNED_REQUIRED_PATCH_SOURCE_ID" && -n "$PINNED_REQUIRED_PATCH_SOURCE_COMMIT" ]]; then
+    revision="$PINNED_REQUIRED_PATCH_SOURCE_COMMIT"
+  fi
+
   destination="$SOURCE_CACHE/$id"
-  if ! clone_sparse_source "$id" "$repository" "$branch" "$destination"; then
-    printf 'SOURCE-UNAVAILABLE\t%s\t%s\t%s\t%s\n' "$id" "$repository" "$branch" "$policy" >> "$MANIFEST"
+  if ! clone_sparse_source "$id" "$repository" "$branch" "$destination" "$revision"; then
+    printf 'SOURCE-UNAVAILABLE\t%s\t%s\t%s\t%s\t%s\n' \
+      "$id" "$repository" "$branch" "$policy" "$revision" >> "$MANIFEST"
     if [[ "$policy" == required ]]; then
-      echo "Required patch source '$id' could not be fetched." >&2
+      echo "Required patch source '$id' could not be fetched at '$revision'." >&2
       exit 1
     fi
     continue
   fi
 
   source_commit="$(git -C "$destination" rev-parse HEAD)"
+  if [[ "$id" == "$PINNED_REQUIRED_PATCH_SOURCE_ID" &&
+        -n "$PINNED_REQUIRED_PATCH_SOURCE_COMMIT" &&
+        "$source_commit" != "$PINNED_REQUIRED_PATCH_SOURCE_COMMIT" ]]; then
+    echo "Required patch source '$id' resolved to $source_commit instead of $PINNED_REQUIRED_PATCH_SOURCE_COMMIT." >&2
+    exit 1
+  fi
+
   printf 'SOURCE\t%s\t%s\t%s\t%s\t%s\n' \
     "$id" "$repository" "$branch" "$policy" "$source_commit" >> "$MANIFEST"
   source_candidates=0

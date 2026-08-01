@@ -9,13 +9,14 @@ NIGHTLY_ROOT="${NIGHTLY_ROOT:-$PROJECT_ROOT/nightly-work}"
 SOURCE_ROOT="$NIGHTLY_ROOT/source"
 ATTEMPT_ROOT="$NIGHTLY_ROOT/attempts"
 CCACHE_ROOT="$NIGHTLY_ROOT/ccache"
+DOWNLOAD_ROOT="${DOWNLOAD_CACHE_DIR:-$NIGHTLY_ROOT/dl}"
 RELEASE_DIR="$PROJECT_ROOT/release"
 JOBS="${JOBS:-4}"
 DATE_UTC="$(date -u +%Y%m%d)"
 DATE_DISPLAY="$(date -u +%Y-%m-%d)"
 
 rm -rf "$SOURCE_ROOT" "$ATTEMPT_ROOT" "$RELEASE_DIR"
-mkdir -p "$SOURCE_ROOT" "$ATTEMPT_ROOT" "$CCACHE_ROOT" "$RELEASE_DIR"
+mkdir -p "$SOURCE_ROOT" "$ATTEMPT_ROOT" "$CCACHE_ROOT" "$DOWNLOAD_ROOT" "$RELEASE_DIR"
 
 repository_url() {
   local repository="$1"
@@ -28,6 +29,7 @@ repository_url() {
 base_source="$SOURCE_ROOT/perceival"
 prepared_source="$SOURCE_ROOT/prepared"
 curated_manifest="$SOURCE_ROOT/CURATED-PATCHES.txt"
+backports_manifest="$SOURCE_ROOT/BACKPORTS-SOURCE.txt"
 source_record="$SOURCE_ROOT/SOURCES.txt"
 empty_ath12k_dir="$SOURCE_ROOT/no-extra-ath12k-patches"
 attempt_dir="$ATTEMPT_ROOT/build-1"
@@ -53,7 +55,15 @@ git -C "$prepared_source" checkout --detach --force FETCH_HEAD
 git -C "$prepared_source" config user.name 'DuskyProjects Builder'
 git -C "$prepared_source" config user.email 'actions@users.noreply.github.com'
 
-bash "$PROJECT_ROOT/scripts/check-mac80211-source.sh" "$prepared_source" >/dev/null
+# Perceival currently targets a generated Linux 7.2-rc4 backports package that
+# has not been published as a downloadable OpenWrt release asset. Generate that
+# package from pinned upstream commits, cache it under the exact filename
+# OpenWrt expects, and update only this prepared checkout's integrity hash.
+bash "$PROJECT_ROOT/scripts/prepare-backports-source.sh" \
+  "$prepared_source" "$DOWNLOAD_ROOT" "$backports_manifest"
+bash "$PROJECT_ROOT/scripts/check-mac80211-source.sh" \
+  "$prepared_source" --cache "$DOWNLOAD_ROOT" >/dev/null
+
 bash "$PROJECT_ROOT/scripts/apply-curated-patches.sh" \
   "$prepared_source" "$curated_manifest"
 
@@ -63,7 +73,9 @@ Base repository:    $OPENWRT_REPOSITORY
 Base branch:        $OPENWRT_BRANCH
 Base commit:        $OPENWRT_COMMIT
 Prepared commit:    $prepared_commit
-Integration policy: Perceival source plus curated local USB/ramoops patches only
+Backports generator:$BACKPORTS_REPOSITORY@$BACKPORTS_COMMIT
+Backports Linux:    $BACKPORTS_LINUX_REPOSITORY@$BACKPORTS_LINUX_COMMIT
+Integration policy: Perceival source plus generated pinned backports and curated local USB/ramoops patches only
 SOURCES
 
 printf '%s\n' \
@@ -71,6 +83,7 @@ printf '%s\n' \
   'Controlled Perceival-only build' \
   "Perceival source: $OPENWRT_COMMIT" \
   "Prepared source:  $prepared_commit" \
+  "Backports source: $BACKPORTS_KERNEL_VERSION" \
   'External overlays: disabled' \
   'External patch intake: disabled' \
   '============================================================'
@@ -89,7 +102,7 @@ if ! env \
   ATH12K_PATCH_DIR="$empty_ath12k_dir" \
   WORK_ROOT="$attempt_dir/work" \
   OUTPUT_DIR="$output_dir" \
-  DOWNLOAD_CACHE_DIR="${DOWNLOAD_CACHE_DIR:-$NIGHTLY_ROOT/dl}" \
+  DOWNLOAD_CACHE_DIR="$DOWNLOAD_ROOT" \
   CCACHE_DIR="$CCACHE_ROOT" \
   CCACHE_MAX_SIZE="${CCACHE_MAX_SIZE:-10G}" \
   JOBS="$JOBS" \
@@ -120,6 +133,8 @@ ENV
 
 cat > "$PROJECT_ROOT/release-notes.md" <<NOTES
 <!-- base-source: $OPENWRT_REPOSITORY@$OPENWRT_COMMIT -->
+<!-- backports-generator: $BACKPORTS_REPOSITORY@$BACKPORTS_COMMIT -->
+<!-- backports-linux: $BACKPORTS_LINUX_REPOSITORY@$BACKPORTS_LINUX_COMMIT -->
 <!-- packages-source: $PACKAGES_FEED_REPOSITORY@$PACKAGES_FEED_COMMIT -->
 <!-- luci-source: $LUCI_FEED_REPOSITORY@$LUCI_FEED_COMMIT -->
 <!-- footstrap-source: $FOOTSTRAP_REPOSITORY@$FOOTSTRAP_COMMIT -->
@@ -128,14 +143,16 @@ cat > "$PROJECT_ROOT/release-notes.md" <<NOTES
 
 ## Source policy
 
-This firmware is built from the pinned Perceival Flint 3 tree. No Kakatkar branch overlay, patch intake, source replacement, or secondary integration is used.
+This firmware is built from the pinned Perceival Flint 3 tree. No Kakatkar branch overlay, patch intake, source replacement, or secondary OpenWrt integration is used.
 
-The only source changes added by this builder are the reviewed local IPQ5332 USB/DWC3 mux migration and ramoops retention patches.
+Perceival's pinned Linux 7.2-rc4 mac80211 source is generated from the pinned OpenWrt backports generator and pinned Linux commit because the referenced release archive is not published. The generated archive is cached and hash-verified before OpenWrt uses it.
+
+The only other source changes added by this builder are the reviewed local IPQ5332 USB/DWC3 mux migration and ramoops retention patches.
 
 ## Assets
 
-- \`flint3-full-factory.bin\`
-- \`flint3-sysupgrade.bin\`
+- `flint3-full-factory.bin`
+- `flint3-sysupgrade.bin`
 NOTES
 
 sha256sum "$RELEASE_DIR"/*.bin

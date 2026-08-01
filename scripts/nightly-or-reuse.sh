@@ -7,8 +7,8 @@ source "$PROJECT_ROOT/build.env"
 
 BASE_REPOSITORY="${BASE_REPOSITORY:-perceival/openwrt-flint3}"
 BASE_BRANCH="${BASE_BRANCH:-flint3-be9300}"
-PATCH_REPOSITORY="${PATCH_REPOSITORY:-KakatkarAkshay/openwrt}"
-PATCH_BRANCH="${PATCH_BRANCH:-gl-be9300}"
+OVERLAY_REPOSITORY="${OVERLAY_REPOSITORY:-KakatkarAkshay/openwrt}"
+OVERLAY_BRANCH="${OVERLAY_BRANCH:-gl-be9300}"
 NIGHTLY_ROOT="${NIGHTLY_ROOT:-$PROJECT_ROOT/nightly-work}"
 RELEASE_DIR="$PROJECT_ROOT/release"
 DATE_UTC="$(date -u +%Y%m%d)"
@@ -59,7 +59,7 @@ binary_fingerprint() {
 }
 
 BASE_HEAD="$(remote_branch_head "$BASE_REPOSITORY" "$BASE_BRANCH" "$OPENWRT_COMMIT")"
-PATCH_HEAD="$(remote_branch_head "$PATCH_REPOSITORY" "$PATCH_BRANCH" "$OPENWRT_COMMIT")"
+OVERLAY_HEAD="$(remote_branch_head "$OVERLAY_REPOSITORY" "$OVERLAY_BRANCH" "$OPENWRT_COMMIT")"
 PACKAGES_HEAD="$(remote_default_head "$PACKAGES_FEED_REPOSITORY" "$PACKAGES_FEED_COMMIT")"
 LUCI_HEAD="$(remote_default_head "$LUCI_FEED_REPOSITORY" "$LUCI_FEED_COMMIT")"
 FOOTSTRAP_HEAD="$(remote_default_head "$FOOTSTRAP_REPOSITORY" "$FOOTSTRAP_COMMIT")"
@@ -77,9 +77,11 @@ BUILDER_HASH="$({
 		config.seed \
 		packages.required \
 		source.required \
+		source-overlays.conf \
 		patch-sources.conf \
 		patches \
 		files \
+		scripts/apply-source-overlays.sh \
 		scripts/build.sh \
 		scripts/nightly-build.sh \
 		scripts/nightly-or-reuse.sh \
@@ -89,7 +91,7 @@ BUILDER_HASH="$({
 
 ATTEMPTED_FINGERPRINT="$({
 	printf 'base=%s\n' "$BASE_HEAD"
-	printf 'patch=%s\n' "$PATCH_HEAD"
+	printf 'overlay=%s\n' "$OVERLAY_HEAD"
 	printf 'packages=%s\n' "$PACKAGES_HEAD"
 	printf 'luci=%s\n' "$LUCI_HEAD"
 	printf 'footstrap=%s\n' "$FOOTSTRAP_HEAD"
@@ -103,7 +105,7 @@ PREVIOUS_ATTEMPTED=''
 PREVIOUS_BUILD=''
 PREVIOUS_STATUS=''
 PREVIOUS_BASE=''
-PREVIOUS_PATCH=''
+PREVIOUS_OVERLAY=''
 PREVIOUS_PACKAGES=''
 PREVIOUS_LUCI=''
 PREVIOUS_FOOTSTRAP=''
@@ -120,7 +122,8 @@ if command -v gh >/dev/null 2>&1 && [[ -n "${GH_TOKEN:-}" ]]; then
 		PREVIOUS_BUILD="$(release_field "$PREVIOUS_BODY" build-fingerprint)"
 		PREVIOUS_STATUS="$(release_field "$PREVIOUS_BODY" build-status)"
 		PREVIOUS_BASE="$(release_field "$PREVIOUS_BODY" base-source)"
-		PREVIOUS_PATCH="$(release_field "$PREVIOUS_BODY" patch-source)"
+		PREVIOUS_OVERLAY="$(release_field "$PREVIOUS_BODY" overlay-source)"
+		[[ -n "$PREVIOUS_OVERLAY" ]] || PREVIOUS_OVERLAY="$(release_field "$PREVIOUS_BODY" patch-source)"
 		PREVIOUS_PACKAGES="$(release_field "$PREVIOUS_BODY" packages-source)"
 		PREVIOUS_LUCI="$(release_field "$PREVIOUS_BODY" luci-source)"
 		PREVIOUS_FOOTSTRAP="$(release_field "$PREVIOUS_BODY" footstrap-source)"
@@ -137,16 +140,16 @@ if [[ -n "$PREVIOUS_TAG" && "$PREVIOUS_ATTEMPTED" == "$ATTEMPTED_FINGERPRINT" ]]
 <!-- build-fingerprint: $CURRENT_BUILD_FINGERPRINT -->
 <!-- build-status: unchanged-reuse -->
 <!-- base-source: $PREVIOUS_BASE -->
-<!-- patch-source: $PREVIOUS_PATCH -->
+<!-- overlay-source: $PREVIOUS_OVERLAY -->
 <!-- packages-source: $PREVIOUS_PACKAGES -->
 <!-- luci-source: $PREVIOUS_LUCI -->
 <!-- footstrap-source: $PREVIOUS_FOOTSTRAP -->
 
-# Flint 3 merged nightly — $DATE_DISPLAY
+# Flint 3 integrated nightly — $DATE_DISPLAY
 
 ## Changelog
 
-No firmware-relevant source, feed, theme, package, overlay, local patch, or monitored patch-source revision changed since \`$PREVIOUS_TAG\`. The previously validated binaries were reused instead of repeating the same OpenWrt compilation.
+No firmware-relevant source, feed, theme, package, selective overlay, local patch, or monitored patch-source revision changed since \`$PREVIOUS_TAG\`. The previously validated binaries were reused instead of repeating the same OpenWrt compilation.
 
 Previous nightly status: \`${PREVIOUS_STATUS:-unknown}\`.
 
@@ -183,16 +186,16 @@ if [[ -n "$PREVIOUS_TAG" ]] && download_release_assets "$PREVIOUS_TAG"; then
 <!-- build-fingerprint: $BUILD_FINGERPRINT -->
 <!-- build-status: reused-after-failure -->
 <!-- base-source: $PREVIOUS_BASE -->
-<!-- patch-source: $PREVIOUS_PATCH -->
+<!-- overlay-source: $PREVIOUS_OVERLAY -->
 <!-- packages-source: $PREVIOUS_PACKAGES -->
 <!-- luci-source: $PREVIOUS_LUCI -->
 <!-- footstrap-source: $PREVIOUS_FOOTSTRAP -->
 
-# Flint 3 merged nightly — $DATE_DISPLAY
+# Flint 3 integrated nightly — $DATE_DISPLAY
 
 ## Changelog
 
-The newest source, feed, and refreshed patch-intake combination did not pass the complete merge, validation, and compilation process. The last-known-good binaries from \`$PREVIOUS_TAG\` were reused.
+The newest source, feed, selective-overlay, and refreshed patch-intake combination did not pass the complete validation and compilation process. The last-known-good binaries from \`$PREVIOUS_TAG\` were reused.
 
 This exact failed input fingerprint will not be rebuilt on every nightly run. It will be tried again when a monitored source, feed, theme, package, overlay, local patch, or patch-source revision changes.
 

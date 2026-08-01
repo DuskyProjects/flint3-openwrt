@@ -13,6 +13,8 @@ JOBS="${JOBS:-$(nproc)}"
 ATH12K_PATCH_DIR="${ATH12K_PATCH_DIR:-$PROJECT_ROOT/patches/mac80211-ath12k}"
 SOURCE_REQUIRED_FILE="${SOURCE_REQUIRED_FILE:-$PROJECT_ROOT/source.required}"
 BUILD_VARIANT="${BUILD_VARIANT:-pinned}"
+OPENWRT_LOCAL_SOURCE="${OPENWRT_LOCAL_SOURCE:-}"
+MERGED_SOURCE_RECORD="${MERGED_SOURCE_RECORD:-}"
 
 mapfile -t REQUIRED_PACKAGES < <(
 	awk 'NF && $1 !~ /^#/ { print $1 }' "$PROJECT_ROOT/packages.required"
@@ -41,11 +43,20 @@ bash "$PROJECT_ROOT/scripts/privacy-audit.sh" | tee "$PROJECT_ROOT/privacy-audit
 mkdir -p "$WORK_ROOT" "$OUTPUT_DIR"
 rm -rf "$OPENWRT_DIR" "$FOOTSTRAP_DIR"
 
-git clone --filter=blob:none --single-branch \
-	--branch "$OPENWRT_BRANCH" \
-	"https://github.com/$OPENWRT_REPOSITORY.git" "$OPENWRT_DIR"
-git -C "$OPENWRT_DIR" checkout --detach "$OPENWRT_COMMIT"
-[[ "$(git -C "$OPENWRT_DIR" rev-parse HEAD)" == "$OPENWRT_COMMIT" ]]
+if [[ -n "$OPENWRT_LOCAL_SOURCE" ]]; then
+	[[ -d "$OPENWRT_LOCAL_SOURCE/.git" ]] || {
+		echo "Prepared OpenWrt source is not a Git checkout: $OPENWRT_LOCAL_SOURCE" >&2
+		exit 1
+	}
+	git clone --local --no-hardlinks "$OPENWRT_LOCAL_SOURCE" "$OPENWRT_DIR"
+	OPENWRT_COMMIT="$(git -C "$OPENWRT_DIR" rev-parse HEAD)"
+else
+	git clone --filter=blob:none --single-branch \
+		--branch "$OPENWRT_BRANCH" \
+		"https://github.com/$OPENWRT_REPOSITORY.git" "$OPENWRT_DIR"
+	git -C "$OPENWRT_DIR" checkout --detach "$OPENWRT_COMMIT"
+	[[ "$(git -C "$OPENWRT_DIR" rev-parse HEAD)" == "$OPENWRT_COMMIT" ]]
+fi
 
 source_check="$PROJECT_ROOT/source-verification.txt"
 : > "$source_check"
@@ -68,7 +79,7 @@ cd "$OPENWRT_DIR"
 
 # Carry reviewed portable patches which are not yet in the selected source.
 # An identical upstream copy is accepted and recorded; a conflicting file with
-# the same name stops the build rather than being overwritten silently.
+# the same name stops the candidate rather than overwriting either version.
 custom_patch_manifest="$PROJECT_ROOT/custom-patches.txt"
 : > "$custom_patch_manifest"
 if compgen -G "$ATH12K_PATCH_DIR/*.patch" >/dev/null; then
@@ -226,6 +237,9 @@ cp -v "$SOURCE_REQUIRED_FILE" "$OUTPUT_DIR/source.required"
 cp -v "$source_check" "$OUTPUT_DIR/"
 cp -v "$custom_patch_manifest" "$OUTPUT_DIR/"
 cp -v "$PROJECT_ROOT/privacy-audit.txt" "$OUTPUT_DIR/"
+if [[ -n "$MERGED_SOURCE_RECORD" && -f "$MERGED_SOURCE_RECORD" ]]; then
+	cp -v "$MERGED_SOURCE_RECORD" "$OUTPUT_DIR/MERGED-SOURCES.txt"
+fi
 
 cat > "$OUTPUT_DIR/SOURCES.txt" <<SOURCES
 Build variant:       $BUILD_VARIANT

@@ -21,18 +21,20 @@ PINNED_FOOTSTRAP_VERSION="$FOOTSTRAP_VERSION"
 NIGHTLY_ROOT="${NIGHTLY_ROOT:-$PROJECT_ROOT/nightly-work}"
 SOURCE_ROOT="$NIGHTLY_ROOT/sources"
 ATTEMPT_ROOT="$NIGHTLY_ROOT/attempts"
+CCACHE_ROOT="$NIGHTLY_ROOT/ccache"
 RELEASE_DIR="$PROJECT_ROOT/release"
 DATE_UTC="$(date -u +%Y%m%d)"
 DATE_DISPLAY="$(date -u +%Y-%m-%d)"
 
-rm -rf "$NIGHTLY_ROOT" "$RELEASE_DIR"
-mkdir -p "$SOURCE_ROOT" "$ATTEMPT_ROOT" "$RELEASE_DIR"
+# Preserve the restored compiler cache while replacing source and attempt data.
+rm -rf "$SOURCE_ROOT" "$ATTEMPT_ROOT" "$RELEASE_DIR"
+mkdir -p "$SOURCE_ROOT" "$ATTEMPT_ROOT" "$CCACHE_ROOT" "$RELEASE_DIR"
 
 latest_head() {
 	local repository="$1"
 	local fallback="$2"
 	local head
-	head="$(git ls-remote "https://github.com/$repository.git" HEAD 2>/dev/null | awk 'NR == 1 { print $1 }')"
+	head="$({ git ls-remote "https://github.com/$repository.git" HEAD 2>/dev/null || true; } | awk 'NR == 1 { print $1 }')"
 	printf '%s\n' "${head:-$fallback}"
 }
 
@@ -40,7 +42,9 @@ clone_history() {
 	local repository="$1"
 	local branch="$2"
 	local destination="$3"
-	git clone --filter=blob:none --no-checkout --single-branch \
+	# Keep complete local mirrors so candidate merges and subsequent local clones
+	# cannot lose lazily fetched blobs from a partial clone.
+	git clone --no-checkout --single-branch \
 		--branch "$branch" "https://github.com/$repository.git" "$destination"
 	git -C "$destination" rev-parse --verify "origin/$branch^{commit}" >/dev/null
 }
@@ -132,10 +136,10 @@ SOURCES
 
 	for feed_tier in "${FEED_TIERS[@]}"; do
 		IFS='|' read -r tier_name packages_commit luci_commit footstrap_commit footstrap_version <<< "$feed_tier"
-		attempt=$((attempt + 1))
-		if (( attempt > MAX_BUILD_ATTEMPTS )); then
+		if (( attempt >= MAX_BUILD_ATTEMPTS )); then
 			break 2
 		fi
+		attempt=$((attempt + 1))
 
 		attempt_dir="$ATTEMPT_ROOT/build-$attempt-$candidate_id-$tier_name"
 		output_dir="$attempt_dir/output"
@@ -162,7 +166,7 @@ SOURCES
 			MERGED_SOURCE_RECORD="$source_record" \
 			WORK_ROOT="$attempt_dir/work" \
 			OUTPUT_DIR="$output_dir" \
-			CCACHE_DIR="$NIGHTLY_ROOT/ccache" \
+			CCACHE_DIR="$CCACHE_ROOT" \
 			JOBS="$JOBS" \
 			bash "$PROJECT_ROOT/scripts/build.sh" >"$log_file" 2>&1; then
 			success=1
@@ -224,10 +228,10 @@ Release assets contain only the full factory image and the sysupgrade image.
 NOTES
 
 cat > "$PROJECT_ROOT/nightly-release.env" <<ENV
-RELEASE_TAG=nightly-$DATE_UTC
-RELEASE_TITLE=Flint_3_Nightly_$DATE_DISPLAY
-FACTORY_FILE=$FACTORY_RELEASE
-SYSUPGRADE_FILE=$SYSUPGRADE_RELEASE
+RELEASE_TAG='nightly-$DATE_UTC'
+RELEASE_TITLE='Flint 3 Nightly $DATE_DISPLAY'
+FACTORY_FILE='$FACTORY_RELEASE'
+SYSUPGRADE_FILE='$SYSUPGRADE_RELEASE'
 ENV
 
 sha256sum "$FACTORY_RELEASE" "$SYSUPGRADE_RELEASE"

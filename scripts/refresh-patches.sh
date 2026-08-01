@@ -6,7 +6,7 @@ CANDIDATE_SOURCE="${1:?usage: refresh-patches.sh <candidate-source> <source-cach
 SOURCE_CACHE="${2:?usage: refresh-patches.sh <candidate-source> <source-cache> <queue-dir> <manifest>}"
 QUEUE_DIR="${3:?usage: refresh-patches.sh <candidate-source> <source-cache> <queue-dir> <manifest>}"
 MANIFEST="${4:?usage: refresh-patches.sh <candidate-source> <source-cache> <queue-dir> <manifest>}"
-REFRESH_EXTERNAL_PATCHES="${REFRESH_EXTERNAL_PATCHES:-1}"
+REFRESH_OPTIONAL_PATCHES="${REFRESH_OPTIONAL_PATCHES:-${REFRESH_EXTERNAL_PATCHES:-1}}"
 
 [[ -d "$CANDIDATE_SOURCE/.git" ]] || {
   echo "Candidate source is not a Git checkout: $CANDIDATE_SOURCE" >&2
@@ -23,7 +23,7 @@ mkdir -p "$QUEUE_DIR" "$SOURCE_CACHE" "$(dirname "$MANIFEST")"
 
 printf 'PATCH INTAKE MANIFEST\n' >> "$MANIFEST"
 printf 'candidate-before=%s\n' "$(git -C "$CANDIDATE_SOURCE" rev-parse HEAD)" >> "$MANIFEST"
-printf 'external-refresh=%s\n\n' "$REFRESH_EXTERNAL_PATCHES" >> "$MANIFEST"
+printf 'optional-refresh=%s\n\n' "$REFRESH_OPTIONAL_PATCHES" >> "$MANIFEST"
 
 if compgen -G "$PROJECT_ROOT/patches/mac80211-ath12k/*.patch" >/dev/null; then
   mkdir -p "$QUEUE_DIR/mac80211-ath12k"
@@ -33,12 +33,6 @@ if compgen -G "$PROJECT_ROOT/patches/mac80211-ath12k/*.patch" >/dev/null; then
       "$(sha256sum "$patch" | awk '{print $1}')" \
       "${patch#$PROJECT_ROOT/}" >> "$MANIFEST"
   done
-fi
-
-if [[ "$REFRESH_EXTERNAL_PATCHES" != 1 ]]; then
-  printf '\nExternal patch intake disabled for this fallback candidate.\n' >> "$MANIFEST"
-  printf 'candidate-after=%s\n' "$(git -C "$CANDIDATE_SOURCE" rev-parse HEAD)" >> "$MANIFEST"
-  exit 0
 fi
 
 PATCH_ROOTS=(
@@ -70,8 +64,6 @@ clone_sparse_source() {
     git -C "$destination" checkout --detach FETCH_HEAD
   fi
   git -C "$destination" sparse-checkout set --no-cone "${PATCH_ROOTS[@]}"
-  printf 'SOURCE\t%s\t%s\t%s\t%s\n' \
-    "$id" "$repository" "$branch" "$(git -C "$destination" rev-parse HEAD)" >> "$MANIFEST"
 }
 
 patch_id() {
@@ -91,28 +83,61 @@ done
 
 conflict=0
 imported=0
+replaced=0
 already=0
 ignored=0
+required_sources=0
 
-while IFS='|' read -r id repository branch; do
+while IFS='|' read -r id repository branch policy; do
   [[ -n "$id" && "$id" != \#* ]] || continue
+  policy="${policy:-optional}"
   [[ -n "$repository" && -n "$branch" ]] || {
     echo "Invalid patch source entry for '$id'." >&2
     exit 1
   }
+  case "$policy" in
+    required)
+      required_sources=$((required_sources + 1))
+      ;;
+    optional)
+      if [[ "$REFRESH_OPTIONAL_PATCHES" != 1 ]]; then
+        printf 'SOURCE-SKIPPED\t%s\toptional intake disabled\n' "$id" >> "$MANIFEST"
+        continue
+      fi
+      ;;
+    *)
+      echo "Invalid patch-source policy '$policy' for '$id'." >&2
+      exit 1
+      ;;
+  esac
+
   destination="$SOURCE_CACHE/$id"
-  clone_sparse_source "$id" "$repository" "$branch" "$destination"
+  if ! clone_sparse_source "$id" "$repository" "$branch" "$destination"; then
+    printf 'SOURCE-UNAVAILABLE\t%s\t%s\t%s\t%s\n' "$id" "$repository" "$branch" "$policy" >> "$MANIFEST"
+    if [[ "$policy" == required ]]; then
+      echo "Required patch source '$id' could not be fetched." >&2
+      exit 1
+    fi
+    continue
+  fi
+
+  source_commit="$(git -C "$destination" rev-parse HEAD)"
+  printf 'SOURCE\t%s\t%s\t%s\t%s\t%s\n' \
+    "$id" "$repository" "$branch" "$policy" "$source_commit" >> "$MANIFEST"
+  source_candidates=0
 
   for root in "${PATCH_ROOTS[@]}"; do
     [[ -d "$destination/$root" ]] || continue
     while IFS= read -r patch; do
       relative="${patch#$destination/}"
 
-      if [[ "$relative" != package/kernel/mac80211/patches/ath12k/* ]] && \
+      if [[ "$policy" == optional ]] && \
+         [[ "$relative" != package/kernel/mac80211/patches/ath12k/* ]] && \
          ! grep -Eiq "$KEYWORDS" "$patch"; then
         ignored=$((ignored + 1))
         continue
       fi
+      source_candidates=$((source_candidates + 1))
 
       pid="$(patch_id "$patch")"
       if [[ -n "$pid" && -n "${SEEN_PATCH_IDS[$pid]:-}" ]]; then
@@ -137,6 +162,16 @@ while IFS='|' read -r id repository branch; do
           continue
         fi
 
+        if [[ "$policy" == required ]]; then
+          install -m 0644 "$patch" "$target"
+          IMPORTED_PATHS+=("$relative")
+          [[ -n "$target_pid" ]] && unset 'SEEN_PATCH_IDS[$target_pid]'
+          [[ -n "$pid" ]] && SEEN_PATCH_IDS[$pid]="$relative"
+          printf 'REPLACED-REQUIRED\t%s\t%s\t%s\n' "$id" "${pid:-no-patch-id}" "$relative" >> "$MANIFEST"
+          replaced=$((replaced + 1))
+          continue
+        fi
+
         printf 'CONFLICT-SKIPPED\t%s\t%s\t%s\n' "$id" "${pid:-no-patch-id}" "$relative" >> "$MANIFEST"
         conflict=$((conflict + 1))
         continue
@@ -150,17 +185,28 @@ while IFS='|' read -r id repository branch; do
       imported=$((imported + 1))
     done < <(find "$destination/$root" -type f -name '*.patch' -print | sort)
   done
+
+  if [[ "$policy" == required && "$source_candidates" -eq 0 ]]; then
+    printf 'SOURCE-EMPTY\t%s\n' "$id" >> "$MANIFEST"
+    echo "Required patch source '$id' exposed no patch files in the selected roots." >&2
+    exit 1
+  fi
 done < "$PROJECT_ROOT/patch-sources.conf"
+
+if (( required_sources == 0 )); then
+  echo "No required patch source is configured." >&2
+  exit 1
+fi
 
 if (( ${#IMPORTED_PATHS[@]} > 0 )); then
   git -C "$CANDIDATE_SOURCE" add -- "${IMPORTED_PATHS[@]}"
-  git -C "$CANDIDATE_SOURCE" config user.name 'DuskyProjects Nightly Builder'
+  git -C "$CANDIDATE_SOURCE" config user.name 'DuskyProjects Builder'
   git -C "$CANDIDATE_SOURCE" config user.email 'actions@users.noreply.github.com'
-  git -C "$CANDIDATE_SOURCE" commit -m "Import refreshed relevant upstream patches"
+  git -C "$CANDIDATE_SOURCE" commit -m "Integrate required and refreshed patch sources"
 fi
 
-printf '\nSUMMARY imported=%d already=%d ignored=%d conflicts=%d\n' \
-  "$imported" "$already" "$ignored" "$conflict" >> "$MANIFEST"
+printf '\nSUMMARY imported=%d replaced-required=%d already=%d ignored=%d optional-conflicts=%d\n' \
+  "$imported" "$replaced" "$already" "$ignored" "$conflict" >> "$MANIFEST"
 printf 'candidate-after=%s\n' "$(git -C "$CANDIDATE_SOURCE" rev-parse HEAD)" >> "$MANIFEST"
 
-echo "Patch intake refreshed: imported=$imported already=$already ignored=$ignored conflicts-skipped=$conflict"
+echo "Patch intake complete: imported=$imported replaced-required=$replaced already=$already optional-conflicts=$conflict"

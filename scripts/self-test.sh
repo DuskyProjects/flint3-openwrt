@@ -11,16 +11,20 @@ configure_git() {
   git -C "$1" config user.email 'self-test@example.invalid'
 }
 
-# The active builder has one source tree only. The old secondary-source
+# The active builder has one OpenWrt source tree only. The old secondary-source
 # configuration and scripts must remain absent.
 test ! -e "$PROJECT_ROOT/patch-sources.conf"
 test ! -e "$PROJECT_ROOT/source-overlays.conf"
 test ! -e "$SCRIPT_ROOT/apply-source-overlays.sh"
 test ! -e "$SCRIPT_ROOT/refresh-patches.sh"
 
+test -s "$SCRIPT_ROOT/prepare-backports-source.sh"
 grep -Fq 'perceival/openwrt-flint3' "$PROJECT_ROOT/build.env"
 grep -Fq 'd90c181d96257c58ac370c19bbd640be7d9c0d76' "$PROJECT_ROOT/build.env"
 grep -Fq 'd90c181d96257c58ac370c19bbd640be7d9c0d76' "$PROJECT_ROOT/source.required"
+grep -Fq '614e5ed4d40d33cbb99313842a4b4bde264a4b2b' "$PROJECT_ROOT/build.env"
+grep -Fq '1590cf0329716306e948a8fc29f1d3ee87d3989f' "$PROJECT_ROOT/build.env"
+grep -Fq 'prepare-backports-source.sh' "$SCRIPT_ROOT/nightly-build.sh"
 grep -Fq 'no-extra-ath12k-patches' "$SCRIPT_ROOT/nightly-build.sh"
 grep -Fq 'External overlays: disabled' "$SCRIPT_ROOT/nightly-build.sh"
 grep -Fq 'External patch intake: disabled' "$SCRIPT_ROOT/nightly-build.sh"
@@ -35,17 +39,23 @@ for path in \
   fi
 done
 
-# mac80211 source URL parsing must support Perceival's upstream-version form.
+# mac80211 source parsing must support Perceival's upstream-version form and
+# verify a generated archive in OpenWrt's normal download cache.
 source_tree="$TEST_ROOT/source"
-mkdir -p "$source_tree/package/kernel/mac80211"
-cat > "$source_tree/package/kernel/mac80211/Makefile" <<'MK'
+cache_tree="$TEST_ROOT/cache"
+mkdir -p "$source_tree/package/kernel/mac80211" "$cache_tree"
+printf 'self-test backports archive\n' > "$cache_tree/backports-7.2-rc4.tar.zst"
+fixture_hash="$(sha256sum "$cache_tree/backports-7.2-rc4.tar.zst" | awk '{print $1}')"
+cat > "$source_tree/package/kernel/mac80211/Makefile" <<MK
 PKG_UPSTREAM_VERSION:=7.2-rc4
-PKG_VERSION:=$(subst -rc,_rc,$(PKG_UPSTREAM_VERSION))
-PKG_SOURCE_URL:=https://github.com/openwrt/backports/releases/download/backports-v$(PKG_UPSTREAM_VERSION)
-PKG_SOURCE:=backports-$(PKG_UPSTREAM_VERSION).tar.zst
+PKG_VERSION:=\$(subst -rc,_rc,\$(PKG_UPSTREAM_VERSION))
+PKG_SOURCE_URL:=https://github.com/openwrt/backports/releases/download/backports-v\$(PKG_UPSTREAM_VERSION)
+PKG_SOURCE:=backports-\$(PKG_UPSTREAM_VERSION).tar.zst
+PKG_HASH:=$fixture_hash
 MK
 url="$(bash "$SCRIPT_ROOT/check-mac80211-source.sh" "$source_tree" --print-only)"
 [[ "$url" == 'https://github.com/openwrt/backports/releases/download/backports-v7.2-rc4/backports-7.2-rc4.tar.zst' ]]
+bash "$SCRIPT_ROOT/check-mac80211-source.sh" "$source_tree" --cache "$cache_tree" >/dev/null
 
 # Curated patches must migrate the board reference to the flat qcom DWC3 node
 # and install only parseable kernel patches.

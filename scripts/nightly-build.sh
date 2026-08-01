@@ -12,8 +12,14 @@ OVERLAY_BRANCH="${OVERLAY_BRANCH:-gl-be9300}"
 MAX_HISTORY="${MAX_HISTORY:-3}"
 MAX_OVERLAY_HISTORY="${MAX_OVERLAY_HISTORY:-1}"
 MAX_BUILD_ATTEMPTS="${MAX_BUILD_ATTEMPTS:-8}"
+CONTROLLED_SINGLE_BUILD="${CONTROLLED_SINGLE_BUILD:-0}"
 JOBS="${JOBS:-4}"
 BACKPORTS_BUMP_COMMIT="${BACKPORTS_BUMP_COMMIT:-509af829c650cb29ebe907e2216b5d648a9b15e6}"
+
+if [[ "$CONTROLLED_SINGLE_BUILD" == 1 ]]; then
+  MAX_HISTORY=1
+  MAX_BUILD_ATTEMPTS=1
+fi
 
 PINNED_PACKAGES_COMMIT="$PACKAGES_FEED_COMMIT"
 PINNED_LUCI_COMMIT="$LUCI_FEED_COMMIT"
@@ -128,18 +134,25 @@ ORDERED_PAIR_FILE="$NIGHTLY_ROOT/source-pairs-ordered.txt"
 } | awk -F'|' '!seen[$3 FS $5]++' > "$ORDERED_PAIR_FILE"
 PAIR_FILE="$ORDERED_PAIR_FILE"
 
-LATEST_PACKAGES_COMMIT="$(latest_head "$PACKAGES_FEED_REPOSITORY" "$PINNED_PACKAGES_COMMIT")"
-LATEST_LUCI_COMMIT="$(latest_head "$LUCI_FEED_REPOSITORY" "$PINNED_LUCI_COMMIT")"
-LATEST_FOOTSTRAP_COMMIT="$(latest_head "$FOOTSTRAP_REPOSITORY" "$PINNED_FOOTSTRAP_COMMIT")"
-LATEST_FOOTSTRAP_VERSION="0.0.0_git${DATE_UTC}_${LATEST_FOOTSTRAP_COMMIT:0:8}"
+if [[ "$CONTROLLED_SINGLE_BUILD" == 1 ]]; then
+  LATEST_PACKAGES_COMMIT="$PINNED_PACKAGES_COMMIT"
+  LATEST_LUCI_COMMIT="$PINNED_LUCI_COMMIT"
+  LATEST_FOOTSTRAP_COMMIT="$PINNED_FOOTSTRAP_COMMIT"
+  LATEST_FOOTSTRAP_VERSION="$PINNED_FOOTSTRAP_VERSION"
+  STRATEGIES=(
+    'integrated-required-known-good|0|known-good'
+  )
+else
+  LATEST_PACKAGES_COMMIT="$(latest_head "$PACKAGES_FEED_REPOSITORY" "$PINNED_PACKAGES_COMMIT")"
+  LATEST_LUCI_COMMIT="$(latest_head "$LUCI_FEED_REPOSITORY" "$PINNED_LUCI_COMMIT")"
+  LATEST_FOOTSTRAP_COMMIT="$(latest_head "$FOOTSTRAP_REPOSITORY" "$PINNED_FOOTSTRAP_COMMIT")"
+  LATEST_FOOTSTRAP_VERSION="0.0.0_git${DATE_UTC}_${LATEST_FOOTSTRAP_COMMIT:0:8}"
+  STRATEGIES=(
+    'integrated-all-latest|1|latest'
+    'integrated-required-known-good|0|known-good'
+  )
+fi
 
-# Every strategy includes required Kakatkar source overlays, required Kakatkar
-# patch intake, and the curated USB migration. Only optional sources and feeds
-# vary between strategies.
-STRATEGIES=(
-  'integrated-all-latest|1|latest'
-  'integrated-required-known-good|0|known-good'
-)
 SOURCE_TIERS=(
   'current|0'
   'published-backports|1'
@@ -314,7 +327,11 @@ SOURCES
         break 3
       fi
 
-      echo "Candidate did not compile; trying the next controlled strategy."
+      if [[ "$CONTROLLED_SINGLE_BUILD" == 1 ]]; then
+        echo "Controlled build failed; no second candidate or strategy will be started."
+      else
+        echo "Candidate did not compile; trying the next controlled strategy."
+      fi
       tail -n 120 "$log_file" || true
     done
   done

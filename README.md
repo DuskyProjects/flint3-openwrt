@@ -2,7 +2,7 @@
 
 Reproducible public OpenWrt firmware builder for the **GL.iNet Flint 3 / GL-BE9300**.
 
-The project keeps reusable hardware fixes, packages, diagnostics and performance defaults established during Flint 3 testing. It deliberately does **not** copy the configuration of any individual router.
+The project keeps the reusable hardware fixes, kernel modules, diagnostics and performance defaults established during Flint 3 testing. It deliberately does **not** copy the configuration of any individual router.
 
 ## Firmware outputs
 
@@ -11,41 +11,46 @@ Every successful GitHub Actions run produces:
 - `*factory.bin` — full stock-to-OpenWrt installation image.
 - `*sysupgrade.bin` — upgrade image for a router already running this OpenWrt port.
 - Image SHA-256 hashes.
-- The final expanded OpenWrt configuration and diffconfig.
-- The exact image package manifest.
-- A factory-FIT listing proving that `hlos` and `rootfs` payloads are present.
-- Pinned OpenWrt, package-feed, LuCI-feed and Footstrap source revisions.
-- The required-package list and privacy-audit result.
+- The final expanded OpenWrt configuration and exact image package manifest.
+- A factory-FIT listing proving that `hlos` and `rootfs` are present.
+- Pinned OpenWrt, package-feed, LuCI-feed and Footstrap revisions.
+- Required-package, required-source-fix and custom-patch verification records.
+- The privacy-audit result.
 
-## Hardware and upstream port features
+## Hardware and source fixes
 
 The pinned `perceival/openwrt-flint3` tree supplies the board-specific work, including:
 
-- IPQ5332 and QCN9274 ath12k Wi-Fi 7 support.
-- Multi-Link Operation support across the Flint 3 radios.
-- RTL8372N DSA switch and Qualcomm PPE Ethernet support.
+- IPQ5332 and QCN9274 ath12k Wi-Fi 7 support and mixed-bus MLO.
+- RTL8372N DSA switching and Qualcomm PPE Ethernet support.
+- Correct checksum handling, CPU tagging, SerDes lane swaps and physical port labels.
 - Factory Ethernet and Wi-Fi MAC derivation from each unit's own ART data.
-- Fan and thermal-zone support.
-- Late-radio setup recovery, WDS/AP-VLAN fixes, MLO transmit-link handling and multi-AP DFS-CAC handling.
+- Fan, thermal-zone, USB controller/PHY and ramoops support.
+- Late-radio setup recovery, WDS/AP-VLAN fixes and multi-AP DFS-CAC handling.
 - QSDK-compatible `factory.bin` creation and the tested path back to stock firmware.
-- A reserved ramoops region for persistent crash records.
 
-## Additional packages in this image
+`source.required` lists the critical source commits. The build stops if a future source pin drops any of them.
+
+The builder also carries the signed ath12k fix that selects a valid active MLO link when link zero is absent. The pinned Perceival tree does not contain that patch, so it is applied explicitly from `patches/mac80211-ath12k/` and its SHA-256 is recorded with the build artifacts.
+
+## Additional packages and defaults
 
 ### Interface and recovery
 
 - LuCI over HTTPS.
 - Footstrap installed and selected by default.
-- Bootstrap retained as a fallback theme.
-- `kmod-ramoops` plus a small service that copies surviving pstore records to `/root/crashlogs` after a warm reboot.
+- Bootstrap retained as a fallback.
+- `kmod-ramoops` and an early-boot service that saves surviving pstore records under `/root/crashlogs`.
+- A larger in-memory log ring without continuous eMMC logging.
 
 ### Performance and traffic management
 
-- `kmod-nft-offload`.
+- Qualcomm PPE/EDMA support from the board port.
+- nftables flow offloading, standard conntrack and conntrack-netlink support.
 - Software and hardware flow offloading enabled on first boot.
 - Standard all-CPU packet steering enabled.
+- SQM, CAKE and the LuCI SQM interface installed but disabled by default.
 - Experimental local-flow steering and interrupt-balancing changes are not included.
-- SQM, CAKE and the LuCI SQM interface are installed but not enabled automatically.
 
 When enabling SQM, disable software and hardware flow offloading so traffic passes through the shaper.
 
@@ -59,20 +64,22 @@ When enabling SQM, disable software and hardware flow offloading so traffic pass
 - `curl` and CA certificates
 - `jq`
 - `lsblk`
+- `usbutils`
 
-### Generic removable-storage support
+### Generic USB and removable-storage support
 
-- USB 3, USB mass-storage and UAS kernel modules.
-- ext4, exFAT and NTFS3 filesystem modules.
-- `block-mount` and `e2fsprogs`.
+- USB core, USB 2/3, xHCI, DWC3 and Qualcomm DWC3 glue modules.
+- SCSI, USB mass-storage and UAS modules.
+- ext4, exFAT, NTFS3 and VFAT modules.
+- `block-mount`, `blockd`, `e2fsprogs`, `lsblk` and `usbutils`.
 
-These packages only make common removable media usable. The image does not create a mount, share a directory, start a file-sharing service or assume that a disk exists.
+These packages provide generic hardware and filesystem support only. The image does not create a mount, select a disk, share a directory, start a file-sharing service or assume that storage exists.
 
 ## Wireless first setup
 
 No country, SSID, encryption key or radio-specific user configuration is embedded.
 
-A regulatory country must be selected before 6 GHz can start. Set the correct country in LuCI or use:
+A regulatory country must be selected before 6 GHz can start. Set the correct country in LuCI or run:
 
 ```sh
 flint3-set-country <CC>
@@ -82,24 +89,22 @@ Replace `<CC>` with the correct two-letter ISO country code. The helper only set
 
 ## Privacy and mass-adoption boundary
 
-The build contains no copied `/etc/config/wireless`, `network`, `dhcp`, `firewall`, `fstab`, `samba4` or `upnpd` file. A build-time privacy audit rejects common forms of live-router data before compilation.
+The build contains no copied `/etc/config/wireless`, `network`, `dhcp`, `firewall`, `fstab`, `samba4` or `upnpd` file. A build-time audit rejects common forms of live-router data before compilation.
 
 The public firmware does **not** include:
 
-- Personal SSIDs or Wi-Fi passwords.
-- Hard-coded Wi-Fi BSSIDs or client MAC addresses.
-- Static leases, client allowlists or private LAN addresses.
+- Personal SSIDs, Wi-Fi passwords, BSSIDs or client MAC addresses.
+- Static leases, client allowlists or hard-coded private addresses.
 - Account-specific encrypted-DNS endpoints.
-- Personal firewall/NFT rules or port forwards.
-- Storage mount paths, disk labels, file-sharing configuration, discovery services or media-server configuration.
-- UPnP permissions tied to a particular device.
+- Personal firewall/NFT rules, port forwards or UPnP permissions.
+- Storage mount paths, disk labels, file-sharing, discovery or media-server configuration.
 - Hostnames or local search domains copied from a live network.
 
 ## Deliberately not copied from older vendor firmware
 
-Older vendor firmware used Linux 5.4 proprietary GL.iNet/Qualcomm packages such as QCA NSS/ECM acceleration and an iptables full-cone NAT module. Those binary and kernel-specific modules are not portable to this mainline kernel-6.18 OpenWrt tree and are not silently replaced with unreviewed third-party code.
+Older vendor firmware used Linux 5.4 proprietary GL.iNet/Qualcomm packages such as QCA NSS/ECM acceleration and an iptables full-cone NAT module. Those binary and kernel-specific modules are not portable to this mainline kernel-6.18 tree and are not silently replaced with unreviewed third-party code.
 
-The supported mainline paths used here are Qualcomm PPE Ethernet support from the Flint 3 port, nftables flow offloading, standard conntrack and CAKE/SQM.
+The supported mainline paths used here are Qualcomm PPE/EDMA, nftables flow offloading, standard conntrack and CAKE/SQM.
 
 ## Build firmware
 
@@ -108,10 +113,11 @@ The supported mainline paths used here are Qualcomm PPE Ethernet support from th
 3. Select **Run workflow**.
 4. Download the `flint3-openwrt-footstrap` artifact after the build succeeds.
 
-The workflow fails if:
+The workflow stops if:
 
-- A required package is dropped by `make defconfig`.
-- A required package is absent from the final image manifest.
+- A critical Flint 3 source commit is absent.
+- A custom patch would overwrite an upstream patch or fails during compilation.
+- A required package is dropped by `make defconfig` or absent from the final image manifest.
 - The factory image lacks `hlos` or `rootfs`.
 - A zero-byte source archive is downloaded.
 - Live network or storage configuration is detected in the image overlay.
@@ -122,6 +128,6 @@ Back up the router's eMMC/ART data before flashing. ART contains unit-specific W
 
 Use the **factory** image only for the documented stock-to-OpenWrt installation path. Use the **sysupgrade** image for upgrades from OpenWrt. Do not force an image intended for the wrong installation path.
 
-## Source pins
+## Reproducibility
 
-Source revisions are pinned in `build.env`. Updating a pin creates a reproducible and reviewable firmware change instead of silently rebuilding against an unknown moving target.
+All source revisions are pinned in `build.env`. Updating a pin creates a reviewable firmware change instead of silently rebuilding against a moving target.

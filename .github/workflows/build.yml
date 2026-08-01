@@ -8,8 +8,9 @@ on:
     paths:
       - build.env
       - config.seed
+      - packages.required
       - files/**
-      - scripts/build.sh
+      - scripts/**
       - .github/workflows/build.yml
 
 permissions:
@@ -44,10 +45,10 @@ jobs:
             rsync swig unzip zlib1g-dev file wget libelf-dev dwarves \
             jq ca-certificates ccache
 
-      - name: Build factory and sysupgrade images
+      - name: Build and validate factory and sysupgrade images
         env:
           JOBS: '4'
-        run: ./scripts/build.sh
+        run: bash scripts/build.sh
 
       - name: Upload firmware
         uses: actions/upload-artifact@v4

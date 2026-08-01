@@ -2,6 +2,11 @@ name: Validate Flint 3 builder
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - validation-trigger.txt
 
 permissions:
   contents: read

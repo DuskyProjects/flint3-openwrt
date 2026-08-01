@@ -1,3 +1,4 @@
+# GL.iNet Flint 3 / GL-BE9300 with LuCI, Footstrap, and persistent crash logging
 CONFIG_TARGET_qualcommbe=y
 CONFIG_TARGET_qualcommbe_ipq53xx=y
 CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y

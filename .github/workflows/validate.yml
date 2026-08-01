@@ -48,7 +48,8 @@ jobs:
             scripts/privacy-audit.sh \
             scripts/refresh-patches.sh \
             scripts/retain-flint3-ramoops.sh \
-            scripts/self-test.sh
+            scripts/self-test.sh \
+            scripts/test-prepared-source-transfer.sh
 
           shellcheck -S error \
             scripts/apply-curated-patches.sh \
@@ -61,7 +62,8 @@ jobs:
             scripts/privacy-audit.sh \
             scripts/refresh-patches.sh \
             scripts/retain-flint3-ramoops.sh \
-            scripts/self-test.sh
+            scripts/self-test.sh \
+            scripts/test-prepared-source-transfer.sh
 
           sh -n \
             files/etc/init.d/flint3-pstore \
@@ -73,7 +75,9 @@ jobs:
           bash scripts/privacy-audit.sh
 
       - name: Run controlled builder self-tests
-        run: bash scripts/self-test.sh
+        run: |
+          bash scripts/self-test.sh
+          bash scripts/test-prepared-source-transfer.sh
 
       - name: Validate required manifests and safety guards
         run: |
@@ -83,6 +87,7 @@ jobs:
           test -s source-overlays.conf
           test -s patch-sources.conf
           test -s scripts/retain-flint3-ramoops.sh
+          test -s scripts/test-prepared-source-transfer.sh
           test -s patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch
           test -s patches/openwrt-source/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch
 
@@ -98,6 +103,8 @@ jobs:
 
           grep -Fq 'unset BUILD_VARIANT' scripts/build.sh
           grep -Fq 'FIRMWARE_BUILD_LABEL=' scripts/build.sh
+          grep -Fq 'fetch --no-tags "$OPENWRT_LOCAL_SOURCE" HEAD' scripts/build.sh
+          ! grep -Fq 'git clone --local --no-hardlinks "$OPENWRT_LOCAL_SOURCE"' scripts/build.sh
           grep -Fq 'BACKPORTS_BUMP_COMMIT=' scripts/nightly-build.sh
           grep -Fq 'MAX_OVERLAY_HISTORY="${MAX_OVERLAY_HISTORY:-1}"' scripts/nightly-build.sh
           grep -Fq 'scripts/apply-curated-patches.sh' scripts/nightly-build.sh

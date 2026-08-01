@@ -10,6 +10,7 @@ OPENWRT_DIR="$WORK_ROOT/openwrt"
 FOOTSTRAP_DIR="$WORK_ROOT/footstrap"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_ROOT/artifacts}"
 JOBS="${JOBS:-$(nproc)}"
+ATH12K_PATCH_DIR="$PROJECT_ROOT/patches/mac80211-ath12k"
 
 mapfile -t REQUIRED_PACKAGES < <(
 	awk 'NF && $1 !~ /^#/ { print $1 }' "$PROJECT_ROOT/packages.required"
@@ -17,6 +18,11 @@ mapfile -t REQUIRED_PACKAGES < <(
 
 [[ ${#REQUIRED_PACKAGES[@]} -gt 0 ]] || {
 	echo "packages.required is empty." >&2
+	exit 1
+}
+
+[[ -s "$PROJECT_ROOT/source.required" ]] || {
+	echo "source.required is missing or empty." >&2
 	exit 1
 }
 
@@ -39,12 +45,46 @@ git clone --filter=blob:none --single-branch \
 git -C "$OPENWRT_DIR" checkout --detach "$OPENWRT_COMMIT"
 [[ "$(git -C "$OPENWRT_DIR" rev-parse HEAD)" == "$OPENWRT_COMMIT" ]]
 
+source_check="$PROJECT_ROOT/source-verification.txt"
+: > "$source_check"
+while IFS=$'\t' read -r commit description; do
+	[[ -n "$commit" && "$commit" != \#* ]] || continue
+	if git -C "$OPENWRT_DIR" merge-base --is-ancestor "$commit" HEAD; then
+		printf 'OK  %s  %s\n' "$commit" "$description" | tee -a "$source_check"
+	else
+		printf 'MISSING  %s  %s\n' "$commit" "$description" | tee -a "$source_check" >&2
+		exit 1
+	fi
+done < "$PROJECT_ROOT/source.required"
+
 git clone --filter=blob:none \
 	"https://github.com/$FOOTSTRAP_REPOSITORY.git" "$FOOTSTRAP_DIR"
 git -C "$FOOTSTRAP_DIR" checkout --detach "$FOOTSTRAP_COMMIT"
 [[ "$(git -C "$FOOTSTRAP_DIR" rev-parse HEAD)" == "$FOOTSTRAP_COMMIT" ]]
 
 cd "$OPENWRT_DIR"
+
+# Carry only reviewed, portable source patches that are not yet present in the
+# pinned Flint 3 tree. OpenWrt's mac80211 package applies these during prepare.
+custom_patch_manifest="$PROJECT_ROOT/custom-patches.txt"
+: > "$custom_patch_manifest"
+if compgen -G "$ATH12K_PATCH_DIR/*.patch" >/dev/null; then
+	mkdir -p package/kernel/mac80211/patches/ath12k
+	for patch in "$ATH12K_PATCH_DIR"/*.patch; do
+		dest="package/kernel/mac80211/patches/ath12k/$(basename "$patch")"
+		if [[ -e "$dest" ]]; then
+			echo "Refusing to overwrite an upstream ath12k patch: $dest" >&2
+			exit 1
+		fi
+		install -m 0644 "$patch" "$dest"
+		cmp -s "$patch" "$dest" || {
+			echo "Custom patch copy verification failed: $patch" >&2
+			exit 1
+		}
+		sha256sum "$patch" | tee -a "$custom_patch_manifest"
+	done
+fi
+
 cat > feeds.conf <<FEEDS
 src-git packages https://github.com/$PACKAGES_FEED_REPOSITORY.git^$PACKAGES_FEED_COMMIT
 src-git luci https://github.com/$LUCI_FEED_REPOSITORY.git^$LUCI_FEED_COMMIT
@@ -173,6 +213,9 @@ cp -v .config "$OUTPUT_DIR/build.config"
 cp -v flint3-build.diffconfig "$OUTPUT_DIR/"
 cp -v feeds.conf "$OUTPUT_DIR/"
 cp -v "$PROJECT_ROOT/packages.required" "$OUTPUT_DIR/"
+cp -v "$PROJECT_ROOT/source.required" "$OUTPUT_DIR/"
+cp -v "$source_check" "$OUTPUT_DIR/"
+cp -v "$custom_patch_manifest" "$OUTPUT_DIR/"
 cp -v "$PROJECT_ROOT/privacy-audit.txt" "$OUTPUT_DIR/"
 
 cat > "$OUTPUT_DIR/SOURCES.txt" <<SOURCES

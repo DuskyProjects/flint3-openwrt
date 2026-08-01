@@ -1,0 +1,34 @@
+From: DuskyProjects <actions@users.noreply.github.com>
+Subject: [PATCH] qualcommbe: gl-be9300: retain ramoops reservation
+
+Kakatkar's current board DTS carries the factory-derived Wi-Fi MAC cells
+needed by the integrated ath12k work. Retain Perceival's tested 1 MiB
+ramoops reservation when that DTS is selected as the canonical board
+overlay.
+
+---
+ target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+--- a/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts
++++ b/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts
+@@ -40,6 +40,19 @@
+ 		q6_caldb: q6-caldb@4d500000 {
+ 			reg = <0x0 0x4d500000 0x0 0x500000>;
+ 			no-map;
+ 		};
+ 
++		/*
++		 * Preserve the kernel log across a warm reset. The 1 MiB range
++		 * between q6-caldb and mlo-global-mem is the tested Flint 3
++		 * ramoops area.
++		 */
++		ramoops@4da00000 {
++			compatible = "ramoops";
++			reg = <0x0 0x4da00000 0x0 0x100000>;
++			console-size = <0x40000>;
++			record-size = <0x20000>;
++			pmsg-size = <0x20000>;
++		};
++
+ 		mlo_mem: mlo-global-mem@4db00000 {

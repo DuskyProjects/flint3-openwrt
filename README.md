@@ -35,13 +35,16 @@ The builder also carries the signed ath12k fix that selects a valid active MLO l
 
 ## Additional packages and defaults
 
-### Interface and recovery
+### Interface, memory and recovery
 
 - LuCI over HTTPS.
 - Footstrap installed and selected by default.
 - Bootstrap retained as a fallback.
 - `kmod-ramoops` and an early-boot service that saves surviving pstore records under `/root/crashlogs`.
+- `kmod-zram` and OpenWrt's standard `zram-swap` service for compressed RAM swap.
 - A larger in-memory log ring without continuous eMMC logging.
+
+The image does not create disk-backed swap. Zram sizing and service policy remain normal OpenWrt configuration, so firmware upgrades do not erase a user's later choices.
 
 ### Performance and traffic management
 
@@ -97,7 +100,7 @@ The public firmware does **not** include:
 - Static leases, client allowlists or hard-coded private addresses.
 - Account-specific encrypted-DNS endpoints.
 - Personal firewall/NFT rules, port forwards or UPnP permissions.
-- Storage mount paths, disk labels, file-sharing, discovery or media-server configuration.
+- Storage mount paths, disk labels, disk-backed swap, file-sharing, discovery or media-server configuration.
 - Hostnames or local search domains copied from a live network.
 
 ## Deliberately not copied from older vendor firmware

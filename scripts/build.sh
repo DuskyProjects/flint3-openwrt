@@ -10,7 +10,9 @@ OPENWRT_DIR="$WORK_ROOT/openwrt"
 FOOTSTRAP_DIR="$WORK_ROOT/footstrap"
 OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_ROOT/artifacts}"
 JOBS="${JOBS:-$(nproc)}"
-ATH12K_PATCH_DIR="$PROJECT_ROOT/patches/mac80211-ath12k"
+ATH12K_PATCH_DIR="${ATH12K_PATCH_DIR:-$PROJECT_ROOT/patches/mac80211-ath12k}"
+SOURCE_REQUIRED_FILE="${SOURCE_REQUIRED_FILE:-$PROJECT_ROOT/source.required}"
+BUILD_VARIANT="${BUILD_VARIANT:-pinned}"
 
 mapfile -t REQUIRED_PACKAGES < <(
 	awk 'NF && $1 !~ /^#/ { print $1 }' "$PROJECT_ROOT/packages.required"
@@ -21,8 +23,8 @@ mapfile -t REQUIRED_PACKAGES < <(
 	exit 1
 }
 
-[[ -s "$PROJECT_ROOT/source.required" ]] || {
-	echo "source.required is missing or empty." >&2
+[[ -s "$SOURCE_REQUIRED_FILE" ]] || {
+	echo "Required-source manifest is missing or empty: $SOURCE_REQUIRED_FILE" >&2
 	exit 1
 }
 
@@ -55,7 +57,7 @@ while IFS=$'\t' read -r commit description; do
 		printf 'MISSING  %s  %s\n' "$commit" "$description" | tee -a "$source_check" >&2
 		exit 1
 	fi
-done < "$PROJECT_ROOT/source.required"
+done < "$SOURCE_REQUIRED_FILE"
 
 git clone --filter=blob:none \
 	"https://github.com/$FOOTSTRAP_REPOSITORY.git" "$FOOTSTRAP_DIR"
@@ -64,8 +66,9 @@ git -C "$FOOTSTRAP_DIR" checkout --detach "$FOOTSTRAP_COMMIT"
 
 cd "$OPENWRT_DIR"
 
-# Carry only reviewed, portable source patches that are not yet present in the
-# pinned Flint 3 tree. OpenWrt's mac80211 package applies these during prepare.
+# Carry reviewed portable patches which are not yet in the selected source.
+# An identical upstream copy is accepted and recorded; a conflicting file with
+# the same name stops the build rather than being overwritten silently.
 custom_patch_manifest="$PROJECT_ROOT/custom-patches.txt"
 : > "$custom_patch_manifest"
 if compgen -G "$ATH12K_PATCH_DIR/*.patch" >/dev/null; then
@@ -73,7 +76,12 @@ if compgen -G "$ATH12K_PATCH_DIR/*.patch" >/dev/null; then
 	for patch in "$ATH12K_PATCH_DIR"/*.patch; do
 		dest="package/kernel/mac80211/patches/ath12k/$(basename "$patch")"
 		if [[ -e "$dest" ]]; then
-			echo "Refusing to overwrite an upstream ath12k patch: $dest" >&2
+			if cmp -s "$patch" "$dest"; then
+				printf 'UPSTREAM  ' | tee -a "$custom_patch_manifest"
+				sha256sum "$patch" | tee -a "$custom_patch_manifest"
+				continue
+			fi
+			echo "Conflicting upstream ath12k patch: $dest" >&2
 			exit 1
 		fi
 		install -m 0644 "$patch" "$dest"
@@ -81,6 +89,7 @@ if compgen -G "$ATH12K_PATCH_DIR/*.patch" >/dev/null; then
 			echo "Custom patch copy verification failed: $patch" >&2
 			exit 1
 		}
+		printf 'APPLIED   ' | tee -a "$custom_patch_manifest"
 		sha256sum "$patch" | tee -a "$custom_patch_manifest"
 	done
 fi
@@ -94,11 +103,11 @@ FEEDS
 ./scripts/feeds install -a
 
 [[ "$(git -C feeds/packages rev-parse HEAD)" == "$PACKAGES_FEED_COMMIT" ]] || {
-	echo "Packages feed did not resolve to the pinned commit." >&2
+	echo "Packages feed did not resolve to the selected commit." >&2
 	exit 1
 }
 [[ "$(git -C feeds/luci rev-parse HEAD)" == "$LUCI_FEED_COMMIT" ]] || {
-	echo "LuCI feed did not resolve to the pinned commit." >&2
+	echo "LuCI feed did not resolve to the selected commit." >&2
 	exit 1
 }
 
@@ -213,12 +222,13 @@ cp -v .config "$OUTPUT_DIR/build.config"
 cp -v flint3-build.diffconfig "$OUTPUT_DIR/"
 cp -v feeds.conf "$OUTPUT_DIR/"
 cp -v "$PROJECT_ROOT/packages.required" "$OUTPUT_DIR/"
-cp -v "$PROJECT_ROOT/source.required" "$OUTPUT_DIR/"
+cp -v "$SOURCE_REQUIRED_FILE" "$OUTPUT_DIR/source.required"
 cp -v "$source_check" "$OUTPUT_DIR/"
 cp -v "$custom_patch_manifest" "$OUTPUT_DIR/"
 cp -v "$PROJECT_ROOT/privacy-audit.txt" "$OUTPUT_DIR/"
 
 cat > "$OUTPUT_DIR/SOURCES.txt" <<SOURCES
+Build variant:       $BUILD_VARIANT
 OpenWrt repository: $OPENWRT_REPOSITORY
 OpenWrt branch:     $OPENWRT_BRANCH
 OpenWrt commit:     $OPENWRT_COMMIT

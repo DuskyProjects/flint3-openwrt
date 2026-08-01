@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$PROJECT_ROOT/build.env"
+
+BASE_REPOSITORY="${BASE_REPOSITORY:-perceival/openwrt-flint3}"
+BASE_BRANCH="${BASE_BRANCH:-flint3-be9300}"
+PATCH_REPOSITORY="${PATCH_REPOSITORY:-KakatkarAkshay/openwrt}"
+PATCH_BRANCH="${PATCH_BRANCH:-gl-be9300}"
+NIGHTLY_ROOT="${NIGHTLY_ROOT:-$PROJECT_ROOT/nightly-work}"
+RELEASE_DIR="$PROJECT_ROOT/release"
+DATE_UTC="$(date -u +%Y%m%d)"
+DATE_DISPLAY="$(date -u +%Y-%m-%d)"
+
+mkdir -p "$NIGHTLY_ROOT/dl" "$NIGHTLY_ROOT/ccache"
+
+remote_branch_head() {
+	local repository="$1"
+	local branch="$2"
+	local fallback="$3"
+	local value
+	value="$({ git ls-remote "https://github.com/$repository.git" "refs/heads/$branch" 2>/dev/null || true; } | awk 'NR == 1 { print $1 }')"
+	printf '%s\n' "${value:-$fallback}"
+}
+
+remote_default_head() {
+	local repository="$1"
+	local fallback="$2"
+	local value
+	value="$({ git ls-remote "https://github.com/$repository.git" HEAD 2>/dev/null || true; } | awk 'NR == 1 { print $1 }')"
+	printf '%s\n' "${value:-$fallback}"
+}
+
+release_field() {
+	local field="$1"
+	sed -n "s/^<!-- ${field}: \(.*\) -->$/\1/p" | head -n1
+}
+
+write_release_env() {
+	cat > "$PROJECT_ROOT/nightly-release.env" <<ENV
+RELEASE_TAG='nightly-$DATE_UTC'
+RELEASE_TITLE='Flint 3 Nightly $DATE_DISPLAY'
+FACTORY_FILE='$RELEASE_DIR/flint3-full-factory.bin'
+SYSUPGRADE_FILE='$RELEASE_DIR/flint3-sysupgrade.bin'
+ENV
+}
+
+download_release_assets() {
+	local tag="$1"
+	rm -rf "$RELEASE_DIR"
+	mkdir -p "$RELEASE_DIR"
+	gh release download "$tag" \
+		--pattern 'flint3-full-factory.bin' \
+		--dir "$RELEASE_DIR" >/dev/null
+	gh release download "$tag" \
+		--pattern 'flint3-sysupgrade.bin' \
+		--dir "$RELEASE_DIR" >/dev/null
+	[[ "$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.bin' | wc -l)" -eq 2 ]]
+}
+
+binary_fingerprint() {
+	(
+		cd "$RELEASE_DIR"
+		sha256sum flint3-full-factory.bin flint3-sysupgrade.bin
+	) | sha256sum | awk '{print $1}'
+}
+
+BASE_HEAD="$(remote_branch_head "$BASE_REPOSITORY" "$BASE_BRANCH" "$OPENWRT_COMMIT")"
+PATCH_HEAD="$(remote_branch_head "$PATCH_REPOSITORY" "$PATCH_BRANCH" "$OPENWRT_COMMIT")"
+PACKAGES_HEAD="$(remote_default_head "$PACKAGES_FEED_REPOSITORY" "$PACKAGES_FEED_COMMIT")"
+LUCI_HEAD="$(remote_default_head "$LUCI_FEED_REPOSITORY" "$LUCI_FEED_COMMIT")"
+FOOTSTRAP_HEAD="$(remote_default_head "$FOOTSTRAP_REPOSITORY" "$FOOTSTRAP_COMMIT")"
+
+BUILDER_HASH="$({
+	git -C "$PROJECT_ROOT" ls-files -s -- \
+		build.env \
+		config.seed \
+		packages.required \
+		source.required \
+		patches \
+		files \
+		scripts/build.sh \
+		scripts/nightly-build.sh \
+		scripts/nightly-or-reuse.sh \
+		scripts/privacy-audit.sh
+} | sha256sum | awk '{print $1}')"
+
+ATTEMPTED_FINGERPRINT="$({
+	printf 'base=%s\n' "$BASE_HEAD"
+	printf 'patch=%s\n' "$PATCH_HEAD"
+	printf 'packages=%s\n' "$PACKAGES_HEAD"
+	printf 'luci=%s\n' "$LUCI_HEAD"
+	printf 'footstrap=%s\n' "$FOOTSTRAP_HEAD"
+	printf 'builder=%s\n' "$BUILDER_HASH"
+} | sha256sum | awk '{print $1}')"
+
+PREVIOUS_TAG=''
+PREVIOUS_BODY=''
+PREVIOUS_ATTEMPTED=''
+PREVIOUS_BUILD=''
+PREVIOUS_STATUS=''
+
+if command -v gh >/dev/null 2>&1 && [[ -n "${GH_TOKEN:-}" ]]; then
+	PREVIOUS_TAG="$(gh release list --limit 100 \
+		--json tagName,isPrerelease,publishedAt \
+		--jq '[.[] | select(.isPrerelease == true and (.tagName | startswith("nightly-")))] | sort_by(.publishedAt) | last | .tagName // ""' \
+		2>/dev/null || true)"
+
+	if [[ -n "$PREVIOUS_TAG" ]]; then
+		PREVIOUS_BODY="$(gh release view "$PREVIOUS_TAG" --json body --jq .body 2>/dev/null || true)"
+		PREVIOUS_ATTEMPTED="$(printf '%s\n' "$PREVIOUS_BODY" | release_field attempted-fingerprint)"
+		PREVIOUS_BUILD="$(printf '%s\n' "$PREVIOUS_BODY" | release_field build-fingerprint)"
+		PREVIOUS_STATUS="$(printf '%s\n' "$PREVIOUS_BODY" | release_field build-status)"
+	fi
+fi
+
+if [[ -n "$PREVIOUS_TAG" && "$PREVIOUS_ATTEMPTED" == "$ATTEMPTED_FINGERPRINT" ]]; then
+	if download_release_assets "$PREVIOUS_TAG"; then
+		CURRENT_BUILD_FINGERPRINT="$(binary_fingerprint)"
+		[[ -n "$PREVIOUS_BUILD" ]] && CURRENT_BUILD_FINGERPRINT="$PREVIOUS_BUILD"
+		write_release_env
+		cat > "$PROJECT_ROOT/release-notes.md" <<NOTES
+<!-- attempted-fingerprint: $ATTEMPTED_FINGERPRINT -->
+<!-- build-fingerprint: $CURRENT_BUILD_FINGERPRINT -->
+<!-- build-status: unchanged-reuse -->
+
+Automated merged nightly firmware for the GL.iNet Flint 3 / GL-BE9300.
+
+No firmware-relevant source, feed, theme, package, overlay, or patch input changed since \`$PREVIOUS_TAG\`. The previously validated binaries were reused instead of repeating the same OpenWrt compilation.
+
+Previous nightly status: \`${PREVIOUS_STATUS:-unknown}\`.
+
+Release assets contain only the full factory image and the sysupgrade image.
+NOTES
+		echo "No relevant inputs changed; reused binaries from $PREVIOUS_TAG."
+		exit 0
+	fi
+fi
+
+export DOWNLOAD_CACHE_DIR="$NIGHTLY_ROOT/dl"
+export CCACHE_DIR="$NIGHTLY_ROOT/ccache"
+export CCACHE_MAX_SIZE="${CCACHE_MAX_SIZE:-3G}"
+
+if bash "$PROJECT_ROOT/scripts/nightly-build.sh"; then
+	BUILD_FINGERPRINT="$(binary_fingerprint)"
+	ORIGINAL_NOTES="$(cat "$PROJECT_ROOT/release-notes.md")"
+	cat > "$PROJECT_ROOT/release-notes.md" <<NOTES
+<!-- attempted-fingerprint: $ATTEMPTED_FINGERPRINT -->
+<!-- build-fingerprint: $BUILD_FINGERPRINT -->
+<!-- build-status: compiled -->
+
+$ORIGINAL_NOTES
+NOTES
+	exit 0
+fi
+
+if [[ -n "$PREVIOUS_TAG" ]] && download_release_assets "$PREVIOUS_TAG"; then
+	BUILD_FINGERPRINT="$(binary_fingerprint)"
+	[[ -n "$PREVIOUS_BUILD" ]] && BUILD_FINGERPRINT="$PREVIOUS_BUILD"
+	write_release_env
+	cat > "$PROJECT_ROOT/release-notes.md" <<NOTES
+<!-- attempted-fingerprint: $ATTEMPTED_FINGERPRINT -->
+<!-- build-fingerprint: $BUILD_FINGERPRINT -->
+<!-- build-status: reused-after-failure -->
+
+Automated merged nightly firmware for the GL.iNet Flint 3 / GL-BE9300.
+
+The newest source/feed combination did not pass the complete merge, validation, and compilation process. The last-known-good binaries from \`$PREVIOUS_TAG\` were reused. This exact failed input fingerprint will not be rebuilt on every nightly run; it will be tried again when a monitored source, feed, theme, package, overlay, or patch changes.
+
+Release assets contain only the full factory image and the sysupgrade image.
+NOTES
+	echo "Newest inputs failed; reused last-known-good binaries from $PREVIOUS_TAG."
+	exit 0
+fi
+
+echo "The newest candidates failed and no prior nightly release was available for reuse." >&2
+exit 1

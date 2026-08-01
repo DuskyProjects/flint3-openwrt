@@ -7,9 +7,14 @@ MANIFEST="${2:?usage: apply-curated-patches.sh <openwrt-tree> <manifest>}"
 SOURCE_PATCH_DIR="$PROJECT_ROOT/patches/openwrt-source"
 KERNEL_PATCH_DIR="$PROJECT_ROOT/patches/qualcommbe-6.18"
 KERNEL_TARGET_DIR="$SOURCE_TREE/target/linux/qualcommbe/patches-6.18"
+RAMOOPS_HELPER="$PROJECT_ROOT/scripts/retain-flint3-ramoops.sh"
 
 [[ -d "$SOURCE_TREE/.git" ]] || {
   echo "OpenWrt source is not a Git checkout: $SOURCE_TREE" >&2
+  exit 1
+}
+[[ -s "$RAMOOPS_HELPER" ]] || {
+  echo "Missing Flint 3 ramoops helper: $RAMOOPS_HELPER" >&2
   exit 1
 }
 
@@ -17,6 +22,9 @@ mkdir -p "$(dirname "$MANIFEST")" "$KERNEL_TARGET_DIR"
 : > "$MANIFEST"
 printf 'CURATED PATCH MANIFEST\n' >> "$MANIFEST"
 printf 'candidate-before=%s\n\n' "$(git -C "$SOURCE_TREE" rev-parse HEAD)" >> "$MANIFEST"
+
+bash -n "$RAMOOPS_HELPER"
+bash "$RAMOOPS_HELPER" "$SOURCE_TREE" "$MANIFEST"
 
 source_applied=0
 source_already=0

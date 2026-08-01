@@ -1,0 +1,48 @@
+#!/bin/sh /etc/rc.common
+
+START=12
+STOP=89
+
+save_pstore() {
+	[ -d /sys/fs/pstore ] || return 0
+
+	first=''
+	for file in /sys/fs/pstore/*; do
+		[ -f "$file" ] || continue
+		first="$file"
+		break
+	done
+	[ -n "$first" ] || return 0
+
+	mkdir -p /root/crashlogs
+
+	fingerprint="$({ for file in /sys/fs/pstore/*; do [ -f "$file" ] && sha256sum "$file"; done; } | sha256sum | awk '{print $1}')"
+	marker=/root/crashlogs/.last-pstore-fingerprint
+	[ -n "$fingerprint" ] || return 0
+	[ "$(cat "$marker" 2>/dev/null)" = "$fingerprint" ] && return 0
+
+	stamp="$(date +%Y%m%d-%H%M%S 2>/dev/null)"
+	boot_id="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null | cut -c1-8)"
+	[ -n "$stamp" ] || stamp=unknown-time
+	[ -n "$boot_id" ] || boot_id=unknown-boot
+	dest="/root/crashlogs/${stamp}-${boot_id}"
+
+	mkdir -p "$dest"
+	for file in /sys/fs/pstore/*; do
+		[ -f "$file" ] || continue
+		cp -a "$file" "$dest/"
+	done
+	dmesg > "$dest/dmesg-after-reboot.txt" 2>&1 || true
+	logread > "$dest/logread-after-reboot.txt" 2>&1 || true
+	printf '%s\n' "$fingerprint" > "$marker"
+	chmod -R go-rwx /root/crashlogs
+	logger -t flint3-pstore "Saved persistent crash records to $dest"
+}
+
+start() {
+	save_pstore
+}
+
+boot() {
+	save_pstore
+}

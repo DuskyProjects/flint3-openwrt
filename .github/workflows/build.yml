@@ -4,18 +4,6 @@ on:
   schedule:
     - cron: '17 8 * * *'
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - build.env
-      - config.seed
-      - packages.required
-      - source.required
-      - patches/**
-      - files/**
-      - scripts/**
-      - .github/workflows/build.yml
 
 permissions:
   contents: write
@@ -49,23 +37,24 @@ jobs:
             rsync swig unzip zlib1g-dev file wget libelf-dev dwarves \
             jq ca-certificates ccache
 
-      - name: Restore compiler cache
-        uses: actions/cache@v4
+      - name: Restore OpenWrt download and compiler caches
+        id: restore-build-cache
+        uses: actions/cache/restore@v4
         with:
-          path: nightly-work/ccache
-          key: flint3-ccache-${{ runner.os }}-${{ github.run_id }}
+          path: |
+            nightly-work/dl
+            nightly-work/ccache
+          key: flint3-build-cache-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            flint3-ccache-${{ runner.os }}-
+            flint3-build-cache-${{ runner.os }}-
 
       - name: Apply merged-source conflict policy
         run: |
           set -euo pipefail
 
-          # Perceival remains the base because it carries the validated factory
-          # and stock-restore path. Where both trees edit the same lines, use
-          # Kakatkar's newer hardware/driver hunk instead of rejecting every
-          # candidate before compilation. Non-conflicting changes from both
-          # histories remain in the merged tree.
+          # Perceival remains the factory/restore base. Kakatkar's version wins
+          # only where the two histories edit the same hunk; all nonconflicting
+          # changes from both trees remain in the candidate.
           sed -i \
             's/merge --no-ff --no-edit --no-gpg-sign FETCH_HEAD/merge --strategy=ort -X theirs --no-ff --no-edit --no-gpg-sign FETCH_HEAD/' \
             scripts/nightly-build.sh
@@ -76,12 +65,30 @@ jobs:
 
           grep -Fq 'merge --strategy=ort -X theirs --no-ff' scripts/nightly-build.sh
 
-      - name: Select and build newest working merged candidate
+      - name: Build or reuse newest known-good firmware
+        id: nightly-build
+        continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
           JOBS: '4'
           MAX_HISTORY: '3'
           MAX_BUILD_ATTEMPTS: '4'
-        run: bash scripts/nightly-build.sh
+          CCACHE_MAX_SIZE: '3G'
+        run: bash scripts/nightly-or-reuse.sh
+
+      - name: Save updated OpenWrt caches
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            nightly-work/dl
+            nightly-work/ccache
+          key: flint3-build-cache-${{ runner.os }}-${{ github.run_id }}
+
+      - name: Stop when no build or reusable release exists
+        if: steps.nightly-build.outcome != 'success'
+        run: exit 1
 
       - name: Publish exactly two firmware assets
         env:

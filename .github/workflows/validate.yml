@@ -1,0 +1,62 @@
+name: Validate Flint 3 builder
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - build.env
+      - config.seed
+      - packages.required
+      - source.required
+      - patches/**
+      - files/**
+      - scripts/**
+      - .github/workflows/**
+  pull_request:
+    paths:
+      - build.env
+      - config.seed
+      - packages.required
+      - source.required
+      - patches/**
+      - files/**
+      - scripts/**
+      - .github/workflows/**
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate shell scripts and privacy boundary
+        run: |
+          set -euo pipefail
+          bash -n \
+            scripts/build.sh \
+            scripts/nightly-build.sh \
+            scripts/nightly-or-reuse.sh \
+            scripts/privacy-audit.sh
+
+          sh -n \
+            files/etc/init.d/flint3-pstore \
+            files/etc/uci-defaults/90-flint3-generic-defaults \
+            files/etc/uci-defaults/99-footstrap-default \
+            files/etc/profile.d/50-flint3-country-warning.sh \
+            files/usr/bin/flint3-set-country
+
+          bash scripts/privacy-audit.sh
+
+      - name: Validate required manifests
+        run: |
+          set -euo pipefail
+          test -s packages.required
+          test -s source.required
+          grep -Fq 'luci-theme-footstrap' packages.required
+          grep -Fq 'kmod-ramoops' packages.required
+          grep -Fq 'kmod-zram' packages.required
+          test "$(find patches -type f -name '*.patch' | wc -l)" -ge 1

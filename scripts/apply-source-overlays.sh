@@ -16,6 +16,10 @@ MANIFEST="${3:?usage: apply-source-overlays.sh <candidate-source> <secondary-com
 }
 
 git -C "$CANDIDATE_SOURCE" cat-file -e "$SECONDARY_COMMIT^{commit}"
+# Patch intake reads this value from the same candidate checkout, ensuring that
+# source overlays and the required Kakatkar patch tree come from one revision.
+git -C "$CANDIDATE_SOURCE" config nightly.overlayCommit "$SECONDARY_COMMIT"
+
 MERGE_BASE="$(git -C "$CANDIDATE_SOURCE" merge-base HEAD "$SECONDARY_COMMIT" || true)"
 [[ -n "$MERGE_BASE" ]] || {
   echo "The base and overlay source trees do not have a common ancestor." >&2
@@ -140,7 +144,7 @@ if (( missing_required > 0 || conflicts > 0 )); then
 fi
 
 if ! git -C "$CANDIDATE_SOURCE" diff --cached --quiet; then
-  git -C "$CANDIDATE_SOURCE" config user.name 'DuskyProjects Nightly Builder'
+  git -C "$CANDIDATE_SOURCE" config user.name 'DuskyProjects Builder'
   git -C "$CANDIDATE_SOURCE" config user.email 'actions@users.noreply.github.com'
   git -C "$CANDIDATE_SOURCE" commit -m "Integrate Flint-specific secondary source changes"
 fi

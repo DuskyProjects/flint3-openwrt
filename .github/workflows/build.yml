@@ -1,6 +1,8 @@
-name: Build Flint 3 firmware
+name: Build merged Flint 3 nightly
 
 on:
+  schedule:
+    - cron: '17 8 * * *'
   workflow_dispatch:
   push:
     branches:
@@ -16,14 +18,14 @@ on:
       - .github/workflows/build.yml
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: flint3-firmware-${{ github.ref }}
+  group: flint3-merged-nightly
   cancel-in-progress: false
 
 jobs:
-  build:
+  build-and-release:
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
@@ -47,15 +49,60 @@ jobs:
             rsync swig unzip zlib1g-dev file wget libelf-dev dwarves \
             jq ca-certificates ccache
 
-      - name: Build and validate factory and sysupgrade images
+      - name: Restore compiler cache
+        uses: actions/cache@v4
+        with:
+          path: nightly-work/ccache
+          key: flint3-ccache-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            flint3-ccache-${{ runner.os }}-
+
+      - name: Select and build newest working merged candidate
         env:
           JOBS: '4'
-        run: bash scripts/build.sh
+          MAX_HISTORY: '3'
+          MAX_BUILD_ATTEMPTS: '4'
+        run: bash scripts/nightly-build.sh
 
-      - name: Upload firmware
-        uses: actions/upload-artifact@v4
-        with:
-          name: flint3-openwrt-footstrap
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 30
+      - name: Publish exactly two firmware assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source nightly-release.env
+
+          test -f "$FACTORY_FILE"
+          test -f "$SYSUPGRADE_FILE"
+          test "$(find release -maxdepth 1 -type f -name '*.bin' | wc -l)" -eq 2
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --title "$RELEASE_TITLE" \
+              --notes-file release-notes.md \
+              --prerelease
+
+            while IFS= read -r asset; do
+              [ -n "$asset" ] || continue
+              gh release delete-asset "$RELEASE_TAG" "$asset" --yes
+            done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "$RELEASE_TITLE" \
+              --notes-file release-notes.md \
+              --prerelease
+          fi
+
+          gh release upload "$RELEASE_TAG" \
+            "$FACTORY_FILE" \
+            "$SYSUPGRADE_FILE" \
+            --clobber
+
+          asset_count="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length')"
+          test "$asset_count" -eq 2
+
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort > /tmp/release-assets
+          printf '%s\n' \
+            "$(basename "$FACTORY_FILE")" \
+            "$(basename "$SYSUPGRADE_FILE")" | sort > /tmp/expected-assets
+          diff -u /tmp/expected-assets /tmp/release-assets

@@ -1,4 +1,4 @@
-name: Build merged Flint 3 nightly
+name: Build integrated Flint 3 nightly
 
 on:
   schedule:
@@ -12,6 +12,7 @@ on:
       - config.seed
       - packages.required
       - source.required
+      - source-overlays.conf
       - patch-sources.conf
       - patches/**
       - files/**
@@ -22,7 +23,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: flint3-merged-nightly
+  group: flint3-integrated-nightly
   cancel-in-progress: true
 
 jobs:
@@ -69,7 +70,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           JOBS: '4'
           MAX_HISTORY: '3'
-          MAX_BUILD_ATTEMPTS: '6'
+          MAX_BUILD_ATTEMPTS: '8'
           CCACHE_MAX_SIZE: '3G'
         run: bash scripts/nightly-or-reuse.sh
 

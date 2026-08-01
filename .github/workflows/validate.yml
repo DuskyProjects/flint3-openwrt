@@ -12,16 +12,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck python3-yaml
+
+      - name: Validate workflow YAML
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          for path in sorted(Path('.github/workflows').glob('*.yml')):
+              with path.open('r', encoding='utf-8') as handle:
+                  yaml.safe_load(handle)
+              print(f'validated {path}')
+          PY
+
       - name: Validate shell scripts and privacy boundary
         run: |
           set -euo pipefail
           bash -n \
             scripts/apply-source-overlays.sh \
             scripts/build.sh \
+            scripts/check-mac80211-source.sh \
             scripts/nightly-build.sh \
             scripts/nightly-or-reuse.sh \
             scripts/privacy-audit.sh \
-            scripts/refresh-patches.sh
+            scripts/refresh-patches.sh \
+            scripts/self-test.sh
+
+          shellcheck -S error \
+            scripts/apply-source-overlays.sh \
+            scripts/build.sh \
+            scripts/check-mac80211-source.sh \
+            scripts/nightly-build.sh \
+            scripts/nightly-or-reuse.sh \
+            scripts/privacy-audit.sh \
+            scripts/refresh-patches.sh \
+            scripts/self-test.sh
 
           sh -n \
             files/etc/init.d/flint3-pstore \
@@ -32,7 +61,10 @@ jobs:
 
           bash scripts/privacy-audit.sh
 
-      - name: Validate required manifests and integration guards
+      - name: Run controlled builder self-tests
+        run: bash scripts/self-test.sh
+
+      - name: Validate required manifests and safety guards
         run: |
           set -euo pipefail
           test -s packages.required
@@ -45,10 +77,14 @@ jobs:
           grep -Fq 'KakatkarAkshay/openwrt' patch-sources.conf
           grep -Fq 'jhbsz/openwrt-flint3' patch-sources.conf
           grep -Fq 'openwrt/openwrt' patch-sources.conf
-          grep -Fq 'target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts' source-overlays.conf
-          grep -Fq 'package/kernel/rtl837x/src/rtl837x_dsa_ops.c' source-overlays.conf
+          grep -Fq 'required|target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts' source-overlays.conf
+          grep -Fq 'required|package/kernel/rtl837x/src/rtl837x_dsa_ops.c' source-overlays.conf
           grep -Fq 'unset BUILD_VARIANT' scripts/build.sh
           grep -Fq 'FIRMWARE_BUILD_LABEL=' scripts/build.sh
+          grep -Fq 'BACKPORTS_BUMP_COMMIT=' scripts/nightly-build.sh
+          grep -Fq 'workflow_dispatch:' .github/workflows/build.yml
+          ! grep -Eq '^  (push|schedule):' .github/workflows/build.yml
+          grep -Fq 'cancel-in-progress: false' .github/workflows/build.yml
           if grep -Fq 'git -C "$merged_source" merge' scripts/nightly-build.sh; then
             echo 'Whole-tree OpenWrt merges are prohibited.' >&2
             exit 1

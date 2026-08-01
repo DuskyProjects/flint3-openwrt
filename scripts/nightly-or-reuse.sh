@@ -75,10 +75,11 @@ LUCI_HEAD="$(remote_default_head "$LUCI_FEED_REPOSITORY" "$LUCI_FEED_COMMIT")"
 FOOTSTRAP_HEAD="$(remote_default_head "$FOOTSTRAP_REPOSITORY" "$FOOTSTRAP_COMMIT")"
 
 PATCH_SOURCE_HEADS=''
-while IFS='|' read -r id repository branch; do
+while IFS='|' read -r id repository branch policy; do
   [[ -n "$id" && "$id" != \#* ]] || continue
+  policy="${policy:-optional}"
   head="$(remote_branch_head "$repository" "$branch" unavailable)"
-  PATCH_SOURCE_HEADS+="${id}=${repository}@${head}"$'\n'
+  PATCH_SOURCE_HEADS+="${id}=${repository}@${head};policy=${policy}"$'\n'
 done < "$PROJECT_ROOT/patch-sources.conf"
 
 # Hash every firmware-relevant builder input. Tests and documentation are not
@@ -94,6 +95,7 @@ BUILDER_HASH="$({
     patch-sources.conf \
     patches \
     files \
+    scripts/apply-curated-patches.sh \
     scripts/apply-source-overlays.sh \
     scripts/build.sh \
     scripts/check-mac80211-source.sh \
@@ -164,7 +166,7 @@ if [[ -n "$PREVIOUS_TAG" && "$PREVIOUS_ATTEMPTED" == "$ATTEMPTED_FINGERPRINT" ]]
 
 ## Changelog
 
-No firmware-relevant source, feed, theme, package, selective overlay, local patch, or monitored patch-source revision changed since \`$PREVIOUS_TAG\`. The previously validated binaries were reused instead of repeating the same OpenWrt compilation.
+No firmware-relevant source, feed, theme, package, required overlay, curated patch, or monitored patch-source revision changed since \`$PREVIOUS_TAG\`. The previously validated binaries were reused instead of repeating the same OpenWrt compilation.
 
 Previous nightly status: \`${PREVIOUS_STATUS:-unknown}\`.
 
@@ -210,9 +212,9 @@ if [[ -n "$PREVIOUS_TAG" ]] && download_release_assets "$PREVIOUS_TAG"; then
 
 ## Changelog
 
-The newest source, feed, selective-overlay, and refreshed patch-intake combination did not pass the complete validation and compilation process. The last-known-good binaries from \`$PREVIOUS_TAG\` were reused.
+The newest required Kakatkar source and patch series, curated patches, selected base, and feeds did not pass the complete validation and compilation process. The last-known-good binaries from \`$PREVIOUS_TAG\` were reused.
 
-This exact failed input fingerprint will not be rebuilt on every nightly run. It will be tried again when a monitored source, feed, theme, package, overlay, local patch, or patch-source revision changes.
+This exact failed input fingerprint will not be rebuilt on every nightly run. It will be tried again when a monitored source, feed, theme, package, overlay, local patch, patch policy, or patch-source revision changes.
 
 Release assets contain only the full factory image and the sysupgrade image.
 NOTES

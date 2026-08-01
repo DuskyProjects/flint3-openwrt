@@ -57,6 +57,25 @@ jobs:
           restore-keys: |
             flint3-ccache-${{ runner.os }}-
 
+      - name: Apply merged-source conflict policy
+        run: |
+          set -euo pipefail
+
+          # Perceival remains the base because it carries the validated factory
+          # and stock-restore path. Where both trees edit the same lines, use
+          # Kakatkar's newer hardware/driver hunk instead of rejecting every
+          # candidate before compilation. Non-conflicting changes from both
+          # histories remain in the merged tree.
+          sed -i \
+            's/merge --no-ff --no-edit --no-gpg-sign FETCH_HEAD/merge --strategy=ort -X theirs --no-ff --no-edit --no-gpg-sign FETCH_HEAD/' \
+            scripts/nightly-build.sh
+
+          sed -i \
+            's/merged cleanly, passed the privacy and package checks/merged with the Kakatkar-preferred overlapping-hunk policy, passed the privacy and package checks/' \
+            scripts/nightly-build.sh
+
+          grep -Fq 'merge --strategy=ort -X theirs --no-ff' scripts/nightly-build.sh
+
       - name: Select and build newest working merged candidate
         env:
           JOBS: '4'

@@ -101,7 +101,7 @@ jobs:
           grep -Fq 'REPLACED-REQUIRED' scripts/refresh-patches.sh
           grep -Fq 'Required patch source' scripts/refresh-patches.sh
           grep -Fq 'replace-required' scripts/apply-source-overlays.sh
-          grep -Fq 'Any positive status is therefore a content conflict' scripts/apply-source-overlays.sh
+          grep -Fq 'positive status is therefore a content conflict' scripts/apply-source-overlays.sh
 
           usb_patch='patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch'
           grep -Fq 'drivers/usb/dwc3/dwc3-qcom.c' "$usb_patch"

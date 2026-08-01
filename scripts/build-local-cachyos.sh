@@ -27,11 +27,15 @@ if ! command -v pacman >/dev/null 2>&1; then
 fi
 
 if [[ "$INSTALL_DEPS" == 1 ]]; then
+  # Do not request Arch's zlib package explicitly. CachyOS installs
+  # zlib-ng-compat, which provides the same headers and ABI but conflicts with
+  # the repository zlib package. The remaining dependencies already require a
+  # compatible zlib provider.
   sudo pacman -S --needed --noconfirm \
     base-devel bash bison ccache clang curl diffutils file findutils flex \
     gawk gettext git grep jq libelf ncurses openssl pahole patch perl \
     python python-pyelftools python-setuptools rsync sed swig tar unzip \
-    util-linux wget which xz zlib zstd
+    util-linux wget which xz zstd
 fi
 
 required_commands=(

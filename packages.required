@@ -1,0 +1,49 @@
+# Packages that must be present in the final GL-BE9300 image.
+# One package per line. Comments and blank lines are ignored.
+
+# Board support supplied by the Flint 3 device profile.
+ath12k-firmware-ipq5332
+ath12k-firmware-qcn9274
+ipq-wifi-glinet_gl-be9300
+kmod-ath12k
+kmod-hwmon-pwmfan
+kmod-phy-realtek
+kmod-qrtr-smd
+kmod-rtl837x-dsa
+
+# LuCI and user interface.
+luci
+luci-ssl
+luci-app-firewall
+luci-app-sqm
+luci-theme-footstrap
+
+# Performance, traffic management, and diagnostics.
+conntrack
+ethtool
+iperf3
+iw-full
+kmod-nf-conntrack-netlink
+kmod-nft-offload
+kmod-sched-cake
+sqm-scripts
+tcpdump
+
+# Persistent crash capture.
+kmod-ramoops
+
+# Generic removable-storage support. No mounts or sharing services are configured.
+block-mount
+e2fsprogs
+kmod-fs-exfat
+kmod-fs-ext4
+kmod-fs-ntfs3
+kmod-usb-storage
+kmod-usb-storage-uas
+kmod-usb3
+lsblk
+
+# General support tools.
+ca-bundle
+curl
+jq

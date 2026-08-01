@@ -26,7 +26,7 @@ match the legacy USB node used as their trailing context.
  #include <linux/interconnect.h>
  #include <linux/platform_device.h>
  #include <linux/phy/phy.h>
-@@ -603,6 +605,34 @@ struct dwc3_glue_ops dwc3_qcom_glue_ops = {
+@@ -603,6 +605,35 @@ struct dwc3_glue_ops dwc3_qcom_glue_ops = {
  	.pre_run_stop	= dwc3_qcom_run_stop_notifier,
  };
  
@@ -62,7 +62,7 @@ match the legacy USB node used as their trailing context.
  static int dwc3_qcom_probe(struct platform_device *pdev)
  {
  	struct dwc3_probe_data	probe_data = {};
-@@ -624,6 +654,10 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
+@@ -624,6 +655,10 @@ static int dwc3_qcom_probe(struct platform_device *pdev)
  
  	qcom->dev = &pdev->dev;
  

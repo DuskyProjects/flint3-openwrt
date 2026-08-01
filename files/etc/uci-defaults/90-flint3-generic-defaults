@@ -18,14 +18,7 @@ fi
 # Keep a larger in-memory ring buffer without continuous writes to eMMC.
 if uci -q get system.@system[0] >/dev/null 2>&1; then
 	uci set system.@system[0].log_size='256'
-	# Leave zram_size_mb unset: OpenWrt's portable default is half of RAM.
-	uci -q delete system.@system[0].zram_size_mb
 	uci commit system
-fi
-
-if [ -x /etc/init.d/zram ]; then
-	/etc/init.d/zram enable
-	/etc/init.d/zram start >/dev/null 2>&1 || true
 fi
 
 if [ -x /etc/init.d/flint3-pstore ]; then

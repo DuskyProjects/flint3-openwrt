@@ -22,7 +22,7 @@ permissions:
 
 concurrency:
   group: flint3-merged-nightly
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-and-release:

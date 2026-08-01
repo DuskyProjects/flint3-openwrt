@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# Portable throughput defaults. No addressing, wireless identity, DNS account,
+# storage path, lease or client-specific access rule belongs in this file.
+if uci -q get network.@globals[0] >/dev/null 2>&1; then
+	uci set network.@globals[0].packet_steering='2'
+	# Local flow steering was experimental and is deliberately not retained.
+	uci -q delete network.@globals[0].steering_flows
+	uci commit network
+fi
+
+if uci -q get firewall.@defaults[0] >/dev/null 2>&1; then
+	uci set firewall.@defaults[0].flow_offloading='1'
+	uci set firewall.@defaults[0].flow_offloading_hw='1'
+	uci commit firewall
+fi
+
+# Keep a larger in-memory ring buffer without continuous writes to eMMC.
+if uci -q get system.@system[0] >/dev/null 2>&1; then
+	uci set system.@system[0].log_size='256'
+	uci commit system
+fi
+
+if [ -x /etc/init.d/flint3-pstore ]; then
+	/etc/init.d/flint3-pstore enable
+	/etc/init.d/flint3-pstore start >/dev/null 2>&1 || true
+fi
+
+exit 0

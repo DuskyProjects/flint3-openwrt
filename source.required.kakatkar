@@ -1,5 +1,0 @@
-# Critical commits that the Kakatkar GL-BE9300 source must contain.
-# Format: commit<TAB>description
-
-e4aeaee9ec28537b53bf2ddc9fcec08fbaf55c77	select a valid ath12k MLO transmit link when link zero is absent
-7bca799d95d7530771dc0a19616a3ea9c2fcbed0	allow secondary AP operation after DFS CAC

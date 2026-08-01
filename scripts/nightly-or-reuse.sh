@@ -56,6 +56,7 @@ BUILDER_HASH="$({
     scripts/check-mac80211-source.sh \
     scripts/nightly-build.sh \
     scripts/nightly-or-reuse.sh \
+    scripts/prepare-backports-source.sh \
     scripts/privacy-audit.sh \
     scripts/retain-flint3-ramoops.sh \
     .github/workflows/build.yml
@@ -63,6 +64,8 @@ BUILDER_HASH="$({
 
 ATTEMPTED_FINGERPRINT="$({
   printf 'base=%s@%s\n' "$OPENWRT_REPOSITORY" "$OPENWRT_COMMIT"
+  printf 'backports=%s@%s\n' "$BACKPORTS_REPOSITORY" "$BACKPORTS_COMMIT"
+  printf 'linux=%s@%s\n' "$BACKPORTS_LINUX_REPOSITORY" "$BACKPORTS_LINUX_COMMIT"
   printf 'packages=%s@%s\n' "$PACKAGES_FEED_REPOSITORY" "$PACKAGES_FEED_COMMIT"
   printf 'luci=%s@%s\n' "$LUCI_FEED_REPOSITORY" "$LUCI_FEED_COMMIT"
   printf 'footstrap=%s@%s\n' "$FOOTSTRAP_REPOSITORY" "$FOOTSTRAP_COMMIT"
@@ -96,13 +99,15 @@ if [[ -n "$previous_tag" && "$previous_attempted" == "$ATTEMPTED_FINGERPRINT" ]]
 <!-- build-fingerprint: $build_fingerprint -->
 <!-- build-status: unchanged-reuse -->
 <!-- base-source: $OPENWRT_REPOSITORY@$OPENWRT_COMMIT -->
+<!-- backports-generator: $BACKPORTS_REPOSITORY@$BACKPORTS_COMMIT -->
+<!-- backports-linux: $BACKPORTS_LINUX_REPOSITORY@$BACKPORTS_LINUX_COMMIT -->
 <!-- packages-source: $PACKAGES_FEED_REPOSITORY@$PACKAGES_FEED_COMMIT -->
 <!-- luci-source: $LUCI_FEED_REPOSITORY@$LUCI_FEED_COMMIT -->
 <!-- footstrap-source: $FOOTSTRAP_REPOSITORY@$FOOTSTRAP_COMMIT -->
 
 # Flint 3 Perceival build — $DATE_DISPLAY
 
-No firmware-relevant Perceival source, feed, package, curated USB patch, or builder input changed since \`$previous_tag\`. The previously validated binaries were reused.
+No firmware-relevant Perceival source, generated backports input, feed, package, curated USB patch, or builder input changed since `$previous_tag`. The previously validated binaries were reused.
 NOTES
     echo "No relevant inputs changed; reused binaries from $previous_tag."
     exit 0

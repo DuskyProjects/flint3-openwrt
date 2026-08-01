@@ -189,7 +189,17 @@ if find -L dl -type f -size 0 -print -quit | grep -q .; then
 	exit 1
 fi
 
-make -j"$JOBS" V=s || make -j1 V=sc
+# Fail quickly on patch-stack and kernel/module errors before spending hours on
+# userspace packages and image generation. These outputs are reused by the
+# subsequent world build, so the successful preflight does not duplicate work.
+echo '=== Kernel-header patch preflight ==='
+make -j"$JOBS" V=s toolchain/kernel-headers/compile
+
+echo '=== Target kernel and module preflight ==='
+make -j"$JOBS" V=s target/linux/compile
+
+echo '=== Full firmware image build ==='
+make -j"$JOBS" V=s
 
 TARGET_DIR="$OPENWRT_DIR/bin/targets/qualcommbe/ipq53xx"
 [[ -d "$TARGET_DIR" ]] || {

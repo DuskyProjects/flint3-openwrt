@@ -9,6 +9,7 @@ on:
       - config.seed
       - packages.required
       - source.required
+      - patch-sources.conf
       - patches/**
       - files/**
       - scripts/**
@@ -19,6 +20,7 @@ on:
       - config.seed
       - packages.required
       - source.required
+      - patch-sources.conf
       - patches/**
       - files/**
       - scripts/**
@@ -40,7 +42,8 @@ jobs:
             scripts/build.sh \
             scripts/nightly-build.sh \
             scripts/nightly-or-reuse.sh \
-            scripts/privacy-audit.sh
+            scripts/privacy-audit.sh \
+            scripts/refresh-patches.sh
 
           sh -n \
             files/etc/init.d/flint3-pstore \
@@ -56,7 +59,10 @@ jobs:
           set -euo pipefail
           test -s packages.required
           test -s source.required
+          test -s patch-sources.conf
           grep -Fq 'luci-theme-footstrap' packages.required
           grep -Fq 'kmod-ramoops' packages.required
           grep -Fq 'kmod-zram' packages.required
+          grep -Fq 'jhbsz/openwrt-flint3' patch-sources.conf
+          grep -Fq 'openwrt/openwrt' patch-sources.conf
           test "$(find patches -type f -name '*.patch' | wc -l)" -ge 1

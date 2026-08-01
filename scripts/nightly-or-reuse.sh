@@ -14,28 +14,23 @@ RELEASE_DIR="$PROJECT_ROOT/release"
 DATE_UTC="$(date -u +%Y%m%d)"
 DATE_DISPLAY="$(date -u +%Y-%m-%d)"
 
-mkdir -p "$NIGHTLY_ROOT/dl" "$NIGHTLY_ROOT/ccache"
+mkdir -p "$NIGHTLY_ROOT/dl" "$NIGHTLY_ROOT/ccache" "$NIGHTLY_ROOT/patch-sources"
 
 remote_branch_head() {
-	local repository="$1"
-	local branch="$2"
-	local fallback="$3"
-	local value
+	local repository="$1" branch="$2" fallback="$3" value
 	value="$({ git ls-remote "https://github.com/$repository.git" "refs/heads/$branch" 2>/dev/null || true; } | awk 'NR == 1 { print $1 }')"
 	printf '%s\n' "${value:-$fallback}"
 }
 
 remote_default_head() {
-	local repository="$1"
-	local fallback="$2"
-	local value
+	local repository="$1" fallback="$2" value
 	value="$({ git ls-remote "https://github.com/$repository.git" HEAD 2>/dev/null || true; } | awk 'NR == 1 { print $1 }')"
 	printf '%s\n' "${value:-$fallback}"
 }
 
 release_field() {
-	local field="$1"
-	sed -n "s/^<!-- ${field}: \(.*\) -->$/\1/p" | head -n1
+	local body="$1" field="$2"
+	printf '%s\n' "$body" | sed -n "s/^<!-- ${field}: \(.*\) -->$/\1/p" | head -n1
 }
 
 write_release_env() {
@@ -51,12 +46,8 @@ download_release_assets() {
 	local tag="$1"
 	rm -rf "$RELEASE_DIR"
 	mkdir -p "$RELEASE_DIR"
-	gh release download "$tag" \
-		--pattern 'flint3-full-factory.bin' \
-		--dir "$RELEASE_DIR" >/dev/null
-	gh release download "$tag" \
-		--pattern 'flint3-sysupgrade.bin' \
-		--dir "$RELEASE_DIR" >/dev/null
+	gh release download "$tag" --pattern 'flint3-full-factory.bin' --dir "$RELEASE_DIR" >/dev/null
+	gh release download "$tag" --pattern 'flint3-sysupgrade.bin' --dir "$RELEASE_DIR" >/dev/null
 	[[ "$(find "$RELEASE_DIR" -maxdepth 1 -type f -name '*.bin' | wc -l)" -eq 2 ]]
 }
 
@@ -73,18 +64,27 @@ PACKAGES_HEAD="$(remote_default_head "$PACKAGES_FEED_REPOSITORY" "$PACKAGES_FEED
 LUCI_HEAD="$(remote_default_head "$LUCI_FEED_REPOSITORY" "$LUCI_FEED_COMMIT")"
 FOOTSTRAP_HEAD="$(remote_default_head "$FOOTSTRAP_REPOSITORY" "$FOOTSTRAP_COMMIT")"
 
+PATCH_SOURCE_HEADS=''
+while IFS='|' read -r id repository branch; do
+	[[ -n "$id" && "$id" != \#* ]] || continue
+	head="$(remote_branch_head "$repository" "$branch" unavailable)"
+	PATCH_SOURCE_HEADS+="${id}=${repository}@${head}"$'\n'
+done < "$PROJECT_ROOT/patch-sources.conf"
+
 BUILDER_HASH="$({
 	git -C "$PROJECT_ROOT" ls-files -s -- \
 		build.env \
 		config.seed \
 		packages.required \
 		source.required \
+		patch-sources.conf \
 		patches \
 		files \
 		scripts/build.sh \
 		scripts/nightly-build.sh \
 		scripts/nightly-or-reuse.sh \
-		scripts/privacy-audit.sh
+		scripts/privacy-audit.sh \
+		scripts/refresh-patches.sh
 } | sha256sum | awk '{print $1}')"
 
 ATTEMPTED_FINGERPRINT="$({
@@ -93,6 +93,7 @@ ATTEMPTED_FINGERPRINT="$({
 	printf 'packages=%s\n' "$PACKAGES_HEAD"
 	printf 'luci=%s\n' "$LUCI_HEAD"
 	printf 'footstrap=%s\n' "$FOOTSTRAP_HEAD"
+	printf 'patch-sources=%s\n' "$PATCH_SOURCE_HEADS"
 	printf 'builder=%s\n' "$BUILDER_HASH"
 } | sha256sum | awk '{print $1}')"
 
@@ -101,6 +102,11 @@ PREVIOUS_BODY=''
 PREVIOUS_ATTEMPTED=''
 PREVIOUS_BUILD=''
 PREVIOUS_STATUS=''
+PREVIOUS_BASE=''
+PREVIOUS_PATCH=''
+PREVIOUS_PACKAGES=''
+PREVIOUS_LUCI=''
+PREVIOUS_FOOTSTRAP=''
 
 if command -v gh >/dev/null 2>&1 && [[ -n "${GH_TOKEN:-}" ]]; then
 	PREVIOUS_TAG="$(gh release list --limit 100 \
@@ -110,9 +116,14 @@ if command -v gh >/dev/null 2>&1 && [[ -n "${GH_TOKEN:-}" ]]; then
 
 	if [[ -n "$PREVIOUS_TAG" ]]; then
 		PREVIOUS_BODY="$(gh release view "$PREVIOUS_TAG" --json body --jq .body 2>/dev/null || true)"
-		PREVIOUS_ATTEMPTED="$(printf '%s\n' "$PREVIOUS_BODY" | release_field attempted-fingerprint)"
-		PREVIOUS_BUILD="$(printf '%s\n' "$PREVIOUS_BODY" | release_field build-fingerprint)"
-		PREVIOUS_STATUS="$(printf '%s\n' "$PREVIOUS_BODY" | release_field build-status)"
+		PREVIOUS_ATTEMPTED="$(release_field "$PREVIOUS_BODY" attempted-fingerprint)"
+		PREVIOUS_BUILD="$(release_field "$PREVIOUS_BODY" build-fingerprint)"
+		PREVIOUS_STATUS="$(release_field "$PREVIOUS_BODY" build-status)"
+		PREVIOUS_BASE="$(release_field "$PREVIOUS_BODY" base-source)"
+		PREVIOUS_PATCH="$(release_field "$PREVIOUS_BODY" patch-source)"
+		PREVIOUS_PACKAGES="$(release_field "$PREVIOUS_BODY" packages-source)"
+		PREVIOUS_LUCI="$(release_field "$PREVIOUS_BODY" luci-source)"
+		PREVIOUS_FOOTSTRAP="$(release_field "$PREVIOUS_BODY" footstrap-source)"
 	fi
 fi
 
@@ -125,10 +136,17 @@ if [[ -n "$PREVIOUS_TAG" && "$PREVIOUS_ATTEMPTED" == "$ATTEMPTED_FINGERPRINT" ]]
 <!-- attempted-fingerprint: $ATTEMPTED_FINGERPRINT -->
 <!-- build-fingerprint: $CURRENT_BUILD_FINGERPRINT -->
 <!-- build-status: unchanged-reuse -->
+<!-- base-source: $PREVIOUS_BASE -->
+<!-- patch-source: $PREVIOUS_PATCH -->
+<!-- packages-source: $PREVIOUS_PACKAGES -->
+<!-- luci-source: $PREVIOUS_LUCI -->
+<!-- footstrap-source: $PREVIOUS_FOOTSTRAP -->
 
-Automated merged nightly firmware for the GL.iNet Flint 3 / GL-BE9300.
+# Flint 3 merged nightly — $DATE_DISPLAY
 
-No firmware-relevant source, feed, theme, package, overlay, or patch input changed since \`$PREVIOUS_TAG\`. The previously validated binaries were reused instead of repeating the same OpenWrt compilation.
+## Changelog
+
+No firmware-relevant source, feed, theme, package, overlay, local patch, or monitored patch-source revision changed since \`$PREVIOUS_TAG\`. The previously validated binaries were reused instead of repeating the same OpenWrt compilation.
 
 Previous nightly status: \`${PREVIOUS_STATUS:-unknown}\`.
 
@@ -164,10 +182,19 @@ if [[ -n "$PREVIOUS_TAG" ]] && download_release_assets "$PREVIOUS_TAG"; then
 <!-- attempted-fingerprint: $ATTEMPTED_FINGERPRINT -->
 <!-- build-fingerprint: $BUILD_FINGERPRINT -->
 <!-- build-status: reused-after-failure -->
+<!-- base-source: $PREVIOUS_BASE -->
+<!-- patch-source: $PREVIOUS_PATCH -->
+<!-- packages-source: $PREVIOUS_PACKAGES -->
+<!-- luci-source: $PREVIOUS_LUCI -->
+<!-- footstrap-source: $PREVIOUS_FOOTSTRAP -->
 
-Automated merged nightly firmware for the GL.iNet Flint 3 / GL-BE9300.
+# Flint 3 merged nightly — $DATE_DISPLAY
 
-The newest source/feed combination did not pass the complete merge, validation, and compilation process. The last-known-good binaries from \`$PREVIOUS_TAG\` were reused. This exact failed input fingerprint will not be rebuilt on every nightly run; it will be tried again when a monitored source, feed, theme, package, overlay, or patch changes.
+## Changelog
+
+The newest source, feed, and refreshed patch-intake combination did not pass the complete merge, validation, and compilation process. The last-known-good binaries from \`$PREVIOUS_TAG\` were reused.
+
+This exact failed input fingerprint will not be rebuilt on every nightly run. It will be tried again when a monitored source, feed, theme, package, overlay, local patch, or patch-source revision changes.
 
 Release assets contain only the full factory image and the sysupgrade image.
 NOTES

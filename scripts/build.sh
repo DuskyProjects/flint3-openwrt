@@ -12,11 +12,16 @@ OUTPUT_DIR="${OUTPUT_DIR:-$PROJECT_ROOT/artifacts}"
 JOBS="${JOBS:-$(nproc)}"
 ATH12K_PATCH_DIR="${ATH12K_PATCH_DIR:-$PROJECT_ROOT/patches/mac80211-ath12k}"
 SOURCE_REQUIRED_FILE="${SOURCE_REQUIRED_FILE:-$PROJECT_ROOT/source.required}"
-BUILD_VARIANT="${BUILD_VARIANT:-pinned}"
+FIRMWARE_BUILD_LABEL="${FIRMWARE_BUILD_LABEL:-${BUILD_VARIANT:-pinned}}"
 OPENWRT_LOCAL_SOURCE="${OPENWRT_LOCAL_SOURCE:-}"
 MERGED_SOURCE_RECORD="${MERGED_SOURCE_RECORD:-}"
 DOWNLOAD_CACHE_DIR="${DOWNLOAD_CACHE_DIR:-}"
 CCACHE_MAX_SIZE="${CCACHE_MAX_SIZE:-3G}"
+
+# BUILD_VARIANT is reserved by OpenWrt's package framework. Leaving our
+# firmware label in the environment causes variant-aware packages such as
+# iproute2 to build an invalid variant and pass empty configure arguments.
+unset BUILD_VARIANT
 
 mapfile -t REQUIRED_PACKAGES < <(
 	awk 'NF && $1 !~ /^#/ { print $1 }' "$PROJECT_ROOT/packages.required"
@@ -254,7 +259,7 @@ if [[ -n "$MERGED_SOURCE_RECORD" && -f "$MERGED_SOURCE_RECORD" ]]; then
 fi
 
 cat > "$OUTPUT_DIR/SOURCES.txt" <<SOURCES
-Build variant:       $BUILD_VARIANT
+Build label:         $FIRMWARE_BUILD_LABEL
 OpenWrt repository: $OPENWRT_REPOSITORY
 OpenWrt branch:     $OPENWRT_BRANCH
 OpenWrt commit:     $OPENWRT_COMMIT

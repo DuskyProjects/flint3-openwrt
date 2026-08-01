@@ -1,68 +1,148 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CANDIDATE_SOURCE="${1:?usage: apply-source-overlays.sh <candidate-source> <secondary-commit> <manifest>}"
 SECONDARY_COMMIT="${2:?usage: apply-source-overlays.sh <candidate-source> <secondary-commit> <manifest>}"
 MANIFEST="${3:?usage: apply-source-overlays.sh <candidate-source> <secondary-commit> <manifest>}"
 
 [[ -d "$CANDIDATE_SOURCE/.git" ]] || {
-	echo "Candidate source is not a Git checkout: $CANDIDATE_SOURCE" >&2
-	exit 1
+  echo "Candidate source is not a Git checkout: $CANDIDATE_SOURCE" >&2
+  exit 1
 }
 [[ -s "$PROJECT_ROOT/source-overlays.conf" ]] || {
-	echo "source-overlays.conf is missing or empty." >&2
-	exit 1
+  echo "source-overlays.conf is missing or empty." >&2
+  exit 1
 }
 
 git -C "$CANDIDATE_SOURCE" cat-file -e "$SECONDARY_COMMIT^{commit}"
+MERGE_BASE="$(git -C "$CANDIDATE_SOURCE" merge-base HEAD "$SECONDARY_COMMIT" || true)"
+[[ -n "$MERGE_BASE" ]] || {
+  echo "The base and overlay source trees do not have a common ancestor." >&2
+  exit 1
+}
+
 mkdir -p "$(dirname "$MANIFEST")"
 : > "$MANIFEST"
-
 printf 'SOURCE OVERLAY MANIFEST\n' >> "$MANIFEST"
-printf 'secondary-commit=%s\n\n' "$SECONDARY_COMMIT" >> "$MANIFEST"
+printf 'secondary-commit=%s\n' "$SECONDARY_COMMIT" >> "$MANIFEST"
+printf 'merge-base=%s\n\n' "$MERGE_BASE" >> "$MANIFEST"
 
-applied=0
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+
+merged=0
 already=0
-missing=0
+kept_base=0
+missing_optional=0
+missing_required=0
+conflicts=0
 
-while IFS= read -r path; do
-	[[ -n "$path" && "$path" != \#* ]] || continue
-	case "$path" in
-		/*|*'..'*)
-			echo "Unsafe overlay path: $path" >&2
-			exit 1
-			;;
-	esac
+while IFS='|' read -r mode path; do
+  [[ -n "$mode" && "$mode" != \#* ]] || continue
+  case "$mode" in
+    required|optional) ;;
+    *)
+      echo "Invalid overlay mode '$mode' for $path" >&2
+      exit 1
+      ;;
+  esac
+  [[ -n "$path" ]] || {
+    echo "Empty overlay path." >&2
+    exit 1
+  }
+  case "$path" in
+    /*|*'..'*)
+      echo "Unsafe overlay path: $path" >&2
+      exit 1
+      ;;
+  esac
 
-	if ! git -C "$CANDIDATE_SOURCE" cat-file -e "$SECONDARY_COMMIT:$path" 2>/dev/null; then
-		printf 'MISSING\t%s\n' "$path" >> "$MANIFEST"
-		missing=$((missing + 1))
-		continue
-	fi
+  if ! git -C "$CANDIDATE_SOURCE" cat-file -e "$SECONDARY_COMMIT:$path" 2>/dev/null; then
+    printf 'MISSING-%s\t%s\n' "${mode^^}" "$path" >> "$MANIFEST"
+    if [[ "$mode" == required ]]; then
+      missing_required=$((missing_required + 1))
+    else
+      missing_optional=$((missing_optional + 1))
+    fi
+    continue
+  fi
 
-	before='absent'
-	if [[ -e "$CANDIDATE_SOURCE/$path" ]]; then
-		before="$(sha256sum "$CANDIDATE_SOURCE/$path" | awk '{print $1}')"
-	fi
-	after="$(git -C "$CANDIDATE_SOURCE" show "$SECONDARY_COMMIT:$path" | sha256sum | awk '{print $1}')"
+  safe_name="$(printf '%s' "$path" | sha256sum | awk '{print $1}')"
+  current_file="$workdir/$safe_name.current"
+  ancestor_file="$workdir/$safe_name.ancestor"
+  overlay_file="$workdir/$safe_name.overlay"
+  merged_file="$workdir/$safe_name.merged"
 
-	if [[ "$before" == "$after" ]]; then
-		printf 'ALREADY\t%s\t%s\n' "$after" "$path" >> "$MANIFEST"
-		already=$((already + 1))
-		continue
-	fi
+  if [[ -f "$CANDIDATE_SOURCE/$path" ]]; then
+    cp "$CANDIDATE_SOURCE/$path" "$current_file"
+  else
+    : > "$current_file"
+  fi
+  if git -C "$CANDIDATE_SOURCE" cat-file -e "$MERGE_BASE:$path" 2>/dev/null; then
+    git -C "$CANDIDATE_SOURCE" show "$MERGE_BASE:$path" > "$ancestor_file"
+  else
+    : > "$ancestor_file"
+  fi
+  git -C "$CANDIDATE_SOURCE" show "$SECONDARY_COMMIT:$path" > "$overlay_file"
 
-	git -C "$CANDIDATE_SOURCE" checkout "$SECONDARY_COMMIT" -- "$path"
-	printf 'APPLIED\t%s\t%s\t%s\n' "$before" "$after" "$path" >> "$MANIFEST"
-	applied=$((applied + 1))
+  current_hash="$(sha256sum "$current_file" | awk '{print $1}')"
+  ancestor_hash="$(sha256sum "$ancestor_file" | awk '{print $1}')"
+  overlay_hash="$(sha256sum "$overlay_file" | awk '{print $1}')"
+
+  if [[ "$current_hash" == "$overlay_hash" ]]; then
+    printf 'ALREADY\t%s\t%s\n' "$current_hash" "$path" >> "$MANIFEST"
+    already=$((already + 1))
+    continue
+  fi
+
+  if [[ "$ancestor_hash" == "$overlay_hash" ]]; then
+    printf 'KEEP-BASE\t%s\t%s\n' "$current_hash" "$path" >> "$MANIFEST"
+    kept_base=$((kept_base + 1))
+    continue
+  fi
+
+  if [[ "$ancestor_hash" == "$current_hash" ]]; then
+    cp "$overlay_file" "$merged_file"
+  else
+    set +e
+    git merge-file -p \
+      -L "Perceival:$path" \
+      -L "Common ancestor:$path" \
+      -L "Kakatkar:$path" \
+      "$current_file" "$ancestor_file" "$overlay_file" > "$merged_file"
+    merge_status=$?
+    set -e
+    if (( merge_status == 1 )); then
+      printf 'CONFLICT\t%s\n' "$path" >> "$MANIFEST"
+      conflicts=$((conflicts + 1))
+      continue
+    elif (( merge_status > 1 )); then
+      echo "git merge-file failed for $path with status $merge_status" >&2
+      exit 1
+    fi
+  fi
+
+  mkdir -p "$CANDIDATE_SOURCE/$(dirname "$path")"
+  cp "$merged_file" "$CANDIDATE_SOURCE/$path"
+  git -C "$CANDIDATE_SOURCE" add -- "$path"
+  result_hash="$(sha256sum "$merged_file" | awk '{print $1}')"
+  printf 'MERGED\t%s\t%s\n' "$result_hash" "$path" >> "$MANIFEST"
+  merged=$((merged + 1))
 done < "$PROJECT_ROOT/source-overlays.conf"
 
-if ! git -C "$CANDIDATE_SOURCE" diff --cached --quiet; then
-	git -C "$CANDIDATE_SOURCE" config user.name 'DuskyProjects Nightly Builder'
-	git -C "$CANDIDATE_SOURCE" config user.email 'actions@users.noreply.github.com'
-	git -C "$CANDIDATE_SOURCE" commit -m "Apply Flint-specific secondary source overlays"
+printf '\nSUMMARY merged=%d already=%d kept-base=%d missing-optional=%d missing-required=%d conflicts=%d\n' \
+  "$merged" "$already" "$kept_base" "$missing_optional" "$missing_required" "$conflicts" >> "$MANIFEST"
+
+if (( missing_required > 0 || conflicts > 0 )); then
+  echo "Source overlay integration was incomplete: missing-required=$missing_required conflicts=$conflicts" >&2
+  exit 1
 fi
 
-printf '\nSUMMARY applied=%d already=%d missing=%d\n' "$applied" "$already" "$missing" >> "$MANIFEST"
-echo "Source overlays refreshed: applied=$applied already=$already missing=$missing"
+if ! git -C "$CANDIDATE_SOURCE" diff --cached --quiet; then
+  git -C "$CANDIDATE_SOURCE" config user.name 'DuskyProjects Nightly Builder'
+  git -C "$CANDIDATE_SOURCE" config user.email 'actions@users.noreply.github.com'
+  git -C "$CANDIDATE_SOURCE" commit -m "Integrate Flint-specific secondary source changes"
+fi
+
+echo "Source overlays integrated: merged=$merged already=$already kept-base=$kept_base missing-optional=$missing_optional"

@@ -128,10 +128,9 @@ set +e
   bash scripts/test-prepared-source-transfer.sh
 
   env \
+    CONTROLLED_SINGLE_BUILD=1 \
     JOBS="$JOBS" \
-    MAX_HISTORY="${MAX_HISTORY:-3}" \
     MAX_OVERLAY_HISTORY=1 \
-    MAX_BUILD_ATTEMPTS="${MAX_BUILD_ATTEMPTS:-8}" \
     NIGHTLY_ROOT="$NIGHTLY_ROOT" \
     DOWNLOAD_CACHE_DIR="$NIGHTLY_ROOT/dl" \
     CCACHE_DIR="$NIGHTLY_ROOT/ccache" \

@@ -4,6 +4,19 @@ on:
   schedule:
     - cron: '17 8 * * *'
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - build.env
+      - config.seed
+      - packages.required
+      - source.required
+      - patch-sources.conf
+      - patches/**
+      - files/**
+      - scripts/**
+      - .github/workflows/build.yml
 
 permissions:
   contents: write
@@ -32,38 +45,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang flex bison g++ gawk \
-            gcc-multilib g++-multilib gettext git libncurses-dev \
+            gcc-multilib g++-multilib gettext git gh libncurses-dev \
             libssl-dev python3 python3-setuptools python3-pyelftools \
             rsync swig unzip zlib1g-dev file wget libelf-dev dwarves \
             jq ca-certificates ccache
 
-      - name: Restore OpenWrt download and compiler caches
+      - name: Restore OpenWrt download, compiler, and patch-source caches
         id: restore-build-cache
         uses: actions/cache/restore@v4
         with:
           path: |
             nightly-work/dl
             nightly-work/ccache
+            nightly-work/patch-sources
           key: flint3-build-cache-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
             flint3-build-cache-${{ runner.os }}-
-
-      - name: Apply merged-source conflict policy
-        run: |
-          set -euo pipefail
-
-          # Perceival remains the factory/restore base. Kakatkar's version wins
-          # only where the two histories edit the same hunk; all nonconflicting
-          # changes from both trees remain in the candidate.
-          sed -i \
-            's/merge --no-ff --no-edit --no-gpg-sign FETCH_HEAD/merge --strategy=ort -X theirs --no-ff --no-edit --no-gpg-sign FETCH_HEAD/' \
-            scripts/nightly-build.sh
-
-          sed -i \
-            's/merged cleanly, passed the privacy and package checks/merged with the Kakatkar-preferred overlapping-hunk policy, passed the privacy and package checks/' \
-            scripts/nightly-build.sh
-
-          grep -Fq 'merge --strategy=ort -X theirs --no-ff' scripts/nightly-build.sh
 
       - name: Build or reuse newest known-good firmware
         id: nightly-build
@@ -72,7 +69,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           JOBS: '4'
           MAX_HISTORY: '3'
-          MAX_BUILD_ATTEMPTS: '4'
+          MAX_BUILD_ATTEMPTS: '6'
           CCACHE_MAX_SIZE: '3G'
         run: bash scripts/nightly-or-reuse.sh
 
@@ -84,23 +81,42 @@ jobs:
           path: |
             nightly-work/dl
             nightly-work/ccache
+            nightly-work/patch-sources
           key: flint3-build-cache-${{ runner.os }}-${{ github.run_id }}
 
       - name: Stop when no build or reusable release exists
         if: steps.nightly-build.outcome != 'success'
         run: exit 1
 
-      - name: Publish exactly two firmware assets
+      - name: Verify release payload
+        run: |
+          set -euo pipefail
+          source nightly-release.env
+          test -s release-notes.md
+          test -s "$FACTORY_FILE"
+          test -s "$SYSUPGRADE_FILE"
+          test "$(find release -maxdepth 1 -type f -name '*.bin' | wc -l)" -eq 2
+          test "$(basename "$FACTORY_FILE")" = 'flint3-full-factory.bin'
+          test "$(basename "$SYSUPGRADE_FILE")" = 'flint3-sysupgrade.bin'
+
+      - name: Preserve build payload as an Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flint3-nightly-release-payload-${{ github.run_id }}
+          path: |
+            release/flint3-full-factory.bin
+            release/flint3-sysupgrade.bin
+            release-notes.md
+            nightly-release.env
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # shellcheck disable=SC1091
           source nightly-release.env
-
-          test -f "$FACTORY_FILE"
-          test -f "$SYSUPGRADE_FILE"
-          test "$(find release -maxdepth 1 -type f -name '*.bin' | wc -l)" -eq 2
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" \
@@ -108,27 +124,40 @@ jobs:
               --notes-file release-notes.md \
               --prerelease
 
-            while IFS= read -r asset; do
-              [ -n "$asset" ] || continue
-              gh release delete-asset "$RELEASE_TAG" "$asset" --yes
-            done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+            gh release upload "$RELEASE_TAG" \
+              "$FACTORY_FILE" \
+              "$SYSUPGRADE_FILE" \
+              --clobber
           else
             gh release create "$RELEASE_TAG" \
+              "$FACTORY_FILE" \
+              "$SYSUPGRADE_FILE" \
+              --target "$GITHUB_SHA" \
               --title "$RELEASE_TITLE" \
               --notes-file release-notes.md \
               --prerelease
           fi
 
-          gh release upload "$RELEASE_TAG" \
-            "$FACTORY_FILE" \
-            "$SYSUPGRADE_FILE" \
-            --clobber
+          while IFS= read -r asset; do
+            case "$asset" in
+              flint3-full-factory.bin|flint3-sysupgrade.bin) ;;
+              *) gh release delete-asset "$RELEASE_TAG" "$asset" --yes ;;
+            esac
+          done < <(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
 
-          asset_count="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length')"
-          test "$asset_count" -eq 2
+      - name: Verify published release and changelog
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source nightly-release.env
 
           gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort > /tmp/release-assets
           printf '%s\n' \
-            "$(basename "$FACTORY_FILE")" \
-            "$(basename "$SYSUPGRADE_FILE")" | sort > /tmp/expected-assets
+            'flint3-full-factory.bin' \
+            'flint3-sysupgrade.bin' | sort > /tmp/expected-assets
           diff -u /tmp/expected-assets /tmp/release-assets
+
+          test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length')" -eq 2
+          test -n "$(gh release view "$RELEASE_TAG" --json body --jq '.body')"
+          gh release view "$RELEASE_TAG" --json url --jq '.url'

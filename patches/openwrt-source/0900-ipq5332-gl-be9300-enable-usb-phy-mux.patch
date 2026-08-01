@@ -1,29 +1,21 @@
 From: DuskyProjects <actions@users.noreply.github.com>
-Subject: [PATCH] qualcommbe: gl-be9300: select the USB side of the shared PHY
+Subject: [PATCH] qualcommbe: gl-be9300: enable the flat IPQ5332 USB controller
 
-Describe the IPQ5332 USB/PCIe PHY mux using the register and value from
-Qualcomm's downstream IPQ5332 device tree. The DWC3 glue selects this
-mux before resetting the controller.
-
-The tcsr syscon starts at 0x01937000, so offset 0x10540 resolves to the
-verified physical register 0x01947540.
+The IPQ5332 kernel patch gives the controller a single flat node handled
+by the current dwc3-qcom glue driver. Enable that node on the Flint 3.
+The driver performs the verified TCSR USB mux selection before reset.
 
 ---
- target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts | 6 ++++++
- 1 file changed, 6 insertions(+)
+ target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
 --- a/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts
 +++ b/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts
-@@ -486,6 +486,12 @@
+@@ -486,7 +486,7 @@
  	status = "okay";
  };
  
+-&usb_dwc {
 +&usb {
-+	qcom,multiplexed-phy;
-+	qcom,phy-mux-regs = <&tcsr 0x10540>;
-+	status = "okay";
-+};
-+
- &usb_dwc {
  	status = "okay";
  };

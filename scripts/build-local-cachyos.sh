@@ -30,7 +30,7 @@ if [[ "$INSTALL_DEPS" == 1 ]]; then
   # CachyOS uses zlib-ng-compat as the zlib ABI provider. Do not request the
   # conflicting Arch zlib package explicitly.
   sudo pacman -S --needed --noconfirm \
-    base-devel bash bison ccache clang curl diffutils file findutils flex \
+    base-devel bash bison ccache clang coccinelle curl diffutils file findutils flex \
     gawk gettext git grep jq libelf ncurses openssl pahole patch perl \
     python python-pyelftools python-setuptools rsync sed swig tar unzip \
     util-linux wget which xz zstd
@@ -38,7 +38,7 @@ fi
 
 required_commands=(
   awk bash bison ccache clang curl file findmnt flex gcc git jq make
-  patch python3 rsync sha256sum swig tar unzip wget xz
+  patch python3 rsync sha256sum spatch swig tar unzip wget xz zstd
 )
 for command_name in "${required_commands[@]}"; do
   command -v "$command_name" >/dev/null 2>&1 || {
@@ -127,6 +127,7 @@ set +e
     scripts/check-mac80211-source.sh \
     scripts/nightly-build.sh \
     scripts/nightly-or-reuse.sh \
+    scripts/prepare-backports-source.sh \
     scripts/privacy-audit.sh \
     scripts/retain-flint3-ramoops.sh \
     scripts/self-test.sh \
@@ -174,7 +175,7 @@ chmod 0644 "$EXPORT_DIR/sha256sums.txt" "$FINAL_LOG"
 
 echo
 echo "Local Flint 3 build completed."
-echo "Source:      Perceival Flint 3 tree plus curated USB/ramoops patches"
+echo "Source:      Perceival Flint 3 tree plus generated pinned backports and curated USB/ramoops patches"
 echo "Sysupgrade: $EXPORT_DIR/flint3-sysupgrade.bin"
 echo "Factory:    $EXPORT_DIR/flint3-full-factory.bin"
 echo "Checksums:  $EXPORT_DIR/sha256sums.txt"

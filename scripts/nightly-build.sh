@@ -13,12 +13,19 @@ MAX_HISTORY="${MAX_HISTORY:-3}"
 MAX_OVERLAY_HISTORY="${MAX_OVERLAY_HISTORY:-1}"
 MAX_BUILD_ATTEMPTS="${MAX_BUILD_ATTEMPTS:-8}"
 CONTROLLED_SINGLE_BUILD="${CONTROLLED_SINGLE_BUILD:-0}"
+CONTROLLED_BASE_COMMIT="${CONTROLLED_BASE_COMMIT:-}"
+CONTROLLED_OVERLAY_COMMIT="${CONTROLLED_OVERLAY_COMMIT:-}"
 JOBS="${JOBS:-4}"
 BACKPORTS_BUMP_COMMIT="${BACKPORTS_BUMP_COMMIT:-509af829c650cb29ebe907e2216b5d648a9b15e6}"
 
 if [[ "$CONTROLLED_SINGLE_BUILD" == 1 ]]; then
   MAX_HISTORY=1
+  MAX_OVERLAY_HISTORY=1
   MAX_BUILD_ATTEMPTS=1
+  [[ -n "$CONTROLLED_BASE_COMMIT" && -n "$CONTROLLED_OVERLAY_COMMIT" ]] || {
+    echo "Controlled build requires exact base and overlay commits." >&2
+    exit 1
+  }
 fi
 
 PINNED_PACKAGES_COMMIT="$PACKAGES_FEED_COMMIT"
@@ -60,6 +67,14 @@ clone_history() {
   git clone --no-checkout --single-branch --branch "$branch" \
     "$url" "$destination"
   git -C "$destination" rev-parse --verify "origin/$branch^{commit}" >/dev/null
+}
+
+ensure_commit() {
+  local repository="$1" commit="$2"
+  if ! git -C "$repository" cat-file -e "$commit^{commit}" 2>/dev/null; then
+    git -C "$repository" fetch --no-tags origin "$commit"
+  fi
+  git -C "$repository" cat-file -e "$commit^{commit}"
 }
 
 release_field() {
@@ -109,6 +124,19 @@ git -C "$OVERLAY_MIRROR" log --first-parent --max-count="$MAX_OVERLAY_HISTORY" \
   --format='%ct|%H' "origin/$OVERLAY_BRANCH" > "$OVERLAY_HISTORY_FILE"
 LATEST_OVERLAY_COMMIT="$(awk -F'|' 'NR == 1 { print $2 }' "$OVERLAY_HISTORY_FILE")"
 
+if [[ "$CONTROLLED_SINGLE_BUILD" == 1 ]]; then
+  ensure_commit "$BASE_MIRROR" "$CONTROLLED_BASE_COMMIT"
+  ensure_commit "$OVERLAY_MIRROR" "$CONTROLLED_OVERLAY_COMMIT"
+  printf '%s|%s\n' \
+    "$(git -C "$BASE_MIRROR" show -s --format=%ct "$CONTROLLED_BASE_COMMIT")" \
+    "$CONTROLLED_BASE_COMMIT" > "$BASE_HISTORY_FILE"
+  printf '%s|%s\n' \
+    "$(git -C "$OVERLAY_MIRROR" show -s --format=%ct "$CONTROLLED_OVERLAY_COMMIT")" \
+    "$CONTROLLED_OVERLAY_COMMIT" > "$OVERLAY_HISTORY_FILE"
+  LATEST_BASE_COMMIT="$CONTROLLED_BASE_COMMIT"
+  LATEST_OVERLAY_COMMIT="$CONTROLLED_OVERLAY_COMMIT"
+fi
+
 [[ -s "$BASE_HISTORY_FILE" && -s "$OVERLAY_HISTORY_FILE" ]] || {
   echo "Could not enumerate Flint 3 source revisions." >&2
   exit 1
@@ -125,11 +153,13 @@ done < "$BASE_HISTORY_FILE"
 sort -t'|' -k1,1nr -k2,2nr -k4,4nr -o "$PAIR_FILE" "$PAIR_FILE"
 
 # Always test the newest base first and the pinned base second while keeping the
-# same required current Kakatkar series.
+# same required current Kakatkar series. Controlled mode has exactly one pair.
 ORDERED_PAIR_FILE="$NIGHTLY_ROOT/source-pairs-ordered.txt"
 {
   awk -F'|' -v b="$LATEST_BASE_COMMIT" -v o="$LATEST_OVERLAY_COMMIT" '$3 == b && $5 == o' "$PAIR_FILE"
-  awk -F'|' -v b="$PINNED_OPENWRT_COMMIT" -v o="$LATEST_OVERLAY_COMMIT" '$3 == b && $5 == o' "$PAIR_FILE"
+  if [[ "$CONTROLLED_SINGLE_BUILD" != 1 ]]; then
+    awk -F'|' -v b="$PINNED_OPENWRT_COMMIT" -v o="$LATEST_OVERLAY_COMMIT" '$3 == b && $5 == o' "$PAIR_FILE"
+  fi
   cat "$PAIR_FILE"
 } | awk -F'|' '!seen[$3 FS $5]++' > "$ORDERED_PAIR_FILE"
 PAIR_FILE="$ORDERED_PAIR_FILE"
@@ -142,6 +172,9 @@ if [[ "$CONTROLLED_SINGLE_BUILD" == 1 ]]; then
   STRATEGIES=(
     'integrated-required-known-good|0|known-good'
   )
+  SOURCE_TIERS=(
+    'published-backports|1'
+  )
 else
   LATEST_PACKAGES_COMMIT="$(latest_head "$PACKAGES_FEED_REPOSITORY" "$PINNED_PACKAGES_COMMIT")"
   LATEST_LUCI_COMMIT="$(latest_head "$LUCI_FEED_REPOSITORY" "$PINNED_LUCI_COMMIT")"
@@ -151,12 +184,11 @@ else
     'integrated-all-latest|1|latest'
     'integrated-required-known-good|0|known-good'
   )
+  SOURCE_TIERS=(
+    'current|0'
+    'published-backports|1'
+  )
 fi
-
-SOURCE_TIERS=(
-  'current|0'
-  'published-backports|1'
-)
 
 attempt=0
 success=0

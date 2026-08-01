@@ -97,9 +97,22 @@ timestamp="$(date +%Y%m%d-%H%M%S)"
 LOCAL_LOG="$STATE_ROOT/build-$timestamp.log"
 FINAL_LOG="$EXPORT_DIR/build.log"
 
+latest_attempt_log() {
+  find "$NIGHTLY_ROOT/attempts" -mindepth 2 -maxdepth 2 -type f -name build.log \
+    -printf '%T@\t%p\n' 2>/dev/null |
+    sort -nr |
+    head -n1 |
+    cut -f2-
+}
+
 copy_log() {
-  if [[ -s "$LOCAL_LOG" ]]; then
-    cp -f "$LOCAL_LOG" "$FINAL_LOG" 2>/dev/null || true
+  local source_log=''
+  source_log="$(latest_attempt_log)"
+  if [[ -z "$source_log" || ! -s "$source_log" ]]; then
+    source_log="$LOCAL_LOG"
+  fi
+  if [[ -s "$source_log" ]]; then
+    cp -f "$source_log" "$FINAL_LOG" 2>/dev/null || true
     chmod 0644 "$FINAL_LOG" 2>/dev/null || true
   fi
 }
@@ -144,7 +157,7 @@ set -e
 copy_log
 
 if (( build_status != 0 )); then
-  echo "Build failed. Log saved to: $FINAL_LOG" >&2
+  echo "Build failed. Full compiler log saved to: $FINAL_LOG" >&2
   exit "$build_status"
 fi
 

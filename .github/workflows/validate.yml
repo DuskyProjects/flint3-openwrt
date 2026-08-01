@@ -106,10 +106,20 @@ jobs:
           grep -Fq 'FIRMWARE_BUILD_LABEL=' scripts/build.sh
           grep -Fq 'fetch --no-tags "$OPENWRT_LOCAL_SOURCE" HEAD' scripts/build.sh
           ! grep -Fq 'git clone --local --no-hardlinks "$OPENWRT_LOCAL_SOURCE"' scripts/build.sh
+          grep -Fq 'toolchain/kernel-headers/compile' scripts/build.sh
+          grep -Fq 'target/linux/compile' scripts/build.sh
+          grep -Fq 'Full firmware image build' scripts/build.sh
+          ! grep -Fq 'make -j1 V=sc' scripts/build.sh
+
           grep -Fq 'BACKPORTS_BUMP_COMMIT=' scripts/nightly-build.sh
           grep -Fq 'MAX_OVERLAY_HISTORY="${MAX_OVERLAY_HISTORY:-1}"' scripts/nightly-build.sh
+          grep -Fq 'CONTROLLED_SINGLE_BUILD="${CONTROLLED_SINGLE_BUILD:-0}"' scripts/nightly-build.sh
+          grep -Fq "'integrated-required-known-good|0|known-good'" scripts/nightly-build.sh
+          grep -Fq 'no second candidate or strategy will be started' scripts/nightly-build.sh
           grep -Fq 'scripts/apply-curated-patches.sh' scripts/nightly-build.sh
           grep -Fq 'REFRESH_OPTIONAL_PATCHES=' scripts/nightly-build.sh
+          grep -Fq 'CONTROLLED_SINGLE_BUILD=1' scripts/build-local-cachyos.sh
+
           grep -Fq 'REPLACED-REQUIRED' scripts/refresh-patches.sh
           grep -Fq 'Required patch source' scripts/refresh-patches.sh
           grep -Fq 'replace-required' scripts/apply-source-overlays.sh
@@ -124,12 +134,14 @@ jobs:
           grep -Fq 'qcom,ipq5332-dwc3", "qcom,snps-dwc3' "$usb_patch"
           grep -Fq 'usb: usb_dwc: usb@8a00000' "$usb_patch"
           grep -Fq 'reg = <0x08a00000 0x100000>' "$usb_patch"
+          grep -Fq 'of_property_read_bool(dev->of_node, "qcom,multiplexed-phy")' "$usb_patch"
           grep -Fq 'regmap_write(tcsr, 0x10540, 0x1)' "$usb_patch"
           grep -Fq 'ordered after the existing Qualcomm DTS' "$usb_patch"
           ! grep -Fq 'dwc3-qcom-legacy.c' "$usb_patch"
 
           board_patch='patches/openwrt-source/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch'
           grep -Fq '&usb {' "$board_patch"
+          grep -Fq 'qcom,multiplexed-phy;' "$board_patch"
           ! grep -Fq 'qcom,phy-mux-regs' "$board_patch"
 
           grep -Fq 'workflow_dispatch:' .github/workflows/build.yml

@@ -88,6 +88,7 @@ jobs:
           test -s patch-sources.conf
           test -s scripts/retain-flint3-ramoops.sh
           test -s scripts/test-prepared-source-transfer.sh
+          test -s patches/qualcommbe-6.18/2989-dt-bindings-usb-qcom-document-multiplexed-phy.patch
           test -s patches/qualcommbe-6.18/2990-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch
           test ! -e patches/qualcommbe-6.18/0900-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch
           test -s patches/openwrt-source/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch
@@ -127,6 +128,10 @@ jobs:
           grep -Fq 'ramoops@4da00000 {' scripts/retain-flint3-ramoops.sh
           grep -Fq 'RAMOOPS-RETAINED' scripts/retain-flint3-ramoops.sh
           grep -Fq 'scripts/retain-flint3-ramoops.sh' scripts/apply-curated-patches.sh
+
+          binding_patch='patches/qualcommbe-6.18/2989-dt-bindings-usb-qcom-document-multiplexed-phy.patch'
+          grep -Fq 'qcom,multiplexed-phy:' "$binding_patch"
+          grep -Fq 'type: boolean' "$binding_patch"
 
           usb_patch='patches/qualcommbe-6.18/2990-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch'
           [[ "$(basename "$usb_patch")" > '2030-arm64-dts-qcom-ipq5332-Add-QPIC-SPI-NAND-controller-.patch' ]]

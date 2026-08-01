@@ -49,6 +49,15 @@ if compgen -G "$KERNEL_PATCH_DIR/*.patch" >/dev/null; then
     dest="$KERNEL_TARGET_DIR/$(basename "$patch")"
     hash="$(sha256sum "$patch" | awk '{print $1}')"
 
+    # Kernel patches are copied into OpenWrt's quilt series and are not applied
+    # at this stage. Parse them explicitly so malformed hunk counts fail before
+    # an expensive kernel preparation or compilation begins.
+    if ! git -C "$SOURCE_TREE" apply --numstat "$patch" >/dev/null; then
+      printf 'KERNEL-CORRUPT\t%s\t%s\n' "$hash" "$relative" >> "$MANIFEST"
+      echo "Curated kernel patch is malformed: $relative" >&2
+      exit 1
+    fi
+
     if [[ -e "$dest" ]]; then
       if ! cmp -s "$patch" "$dest"; then
         printf 'KERNEL-CONFLICT\t%s\t%s\n' "$hash" "$relative" >> "$MANIFEST"

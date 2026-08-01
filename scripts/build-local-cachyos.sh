@@ -119,10 +119,13 @@ set +e
     scripts/nightly-or-reuse.sh \
     scripts/privacy-audit.sh \
     scripts/refresh-patches.sh \
-    scripts/self-test.sh
+    scripts/retain-flint3-ramoops.sh \
+    scripts/self-test.sh \
+    scripts/test-prepared-source-transfer.sh
 
   bash scripts/privacy-audit.sh
   bash scripts/self-test.sh
+  bash scripts/test-prepared-source-transfer.sh
 
   env \
     JOBS="$JOBS" \

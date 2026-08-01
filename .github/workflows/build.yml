@@ -1,4 +1,4 @@
-name: Build integrated Flint 3 firmware
+name: Build Perceival Flint 3 firmware
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: flint3-integrated-build
+  group: flint3-perceival-build
   cancel-in-progress: false
 
 jobs:
@@ -40,52 +40,47 @@ jobs:
           set -euo pipefail
           bash -n \
             scripts/apply-curated-patches.sh \
-            scripts/apply-source-overlays.sh \
             scripts/build.sh \
             scripts/build-local-cachyos.sh \
             scripts/check-mac80211-source.sh \
             scripts/nightly-build.sh \
             scripts/nightly-or-reuse.sh \
             scripts/privacy-audit.sh \
-            scripts/refresh-patches.sh \
-            scripts/self-test.sh
+            scripts/retain-flint3-ramoops.sh \
+            scripts/self-test.sh \
+            scripts/test-prepared-source-transfer.sh
 
           shellcheck -S error \
             scripts/apply-curated-patches.sh \
-            scripts/apply-source-overlays.sh \
             scripts/build.sh \
             scripts/build-local-cachyos.sh \
             scripts/check-mac80211-source.sh \
             scripts/nightly-build.sh \
             scripts/nightly-or-reuse.sh \
             scripts/privacy-audit.sh \
-            scripts/refresh-patches.sh \
-            scripts/self-test.sh
+            scripts/retain-flint3-ramoops.sh \
+            scripts/self-test.sh \
+            scripts/test-prepared-source-transfer.sh
 
           bash scripts/privacy-audit.sh
           bash scripts/self-test.sh
+          bash scripts/test-prepared-source-transfer.sh
 
-      - name: Restore OpenWrt download, compiler, and patch-source caches
+      - name: Restore OpenWrt download and compiler caches
         id: restore-build-cache
         uses: actions/cache/restore@v4
         with:
           path: |
             nightly-work/dl
             nightly-work/ccache
-            nightly-work/patch-sources
-          key: flint3-build-cache-${{ runner.os }}-${{ github.run_id }}
+          key: flint3-perceival-cache-${{ runner.os }}-${{ github.run_id }}
           restore-keys: |
-            flint3-build-cache-${{ runner.os }}-
+            flint3-perceival-cache-${{ runner.os }}-
 
-      - name: Build or reuse newest known-good firmware
-        id: nightly-build
-        continue-on-error: true
+      - name: Build or reuse unchanged Perceival firmware
         env:
           GH_TOKEN: ${{ github.token }}
           JOBS: '4'
-          MAX_HISTORY: '3'
-          MAX_OVERLAY_HISTORY: '1'
-          MAX_BUILD_ATTEMPTS: '8'
           CCACHE_MAX_SIZE: '3G'
         run: bash scripts/nightly-or-reuse.sh
 
@@ -97,12 +92,7 @@ jobs:
           path: |
             nightly-work/dl
             nightly-work/ccache
-            nightly-work/patch-sources
-          key: flint3-build-cache-${{ runner.os }}-${{ github.run_id }}
-
-      - name: Stop when no build or reusable release exists
-        if: steps.nightly-build.outcome != 'success'
-        run: exit 1
+          key: flint3-perceival-cache-${{ runner.os }}-${{ github.run_id }}
 
       - name: Verify release payload
         run: |

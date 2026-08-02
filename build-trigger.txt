@@ -1,0 +1,2 @@
+Firmware build requested: 2026-08-01T19:14:00-05:00
+Source policy: pinned perceival/openwrt-flint3 base only

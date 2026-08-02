@@ -63,7 +63,7 @@ jobs:
           bash -n scripts/*.sh
           shellcheck -S warning scripts/*.sh
 
-      - name: Enforce Percival-only source policy
+      - name: Enforce two-track Percival-only policy
         run: |
           set -euo pipefail
 
@@ -75,17 +75,44 @@ jobs:
           test ! -e scripts/prepare-backports.sh
           test ! -e build.env
           test ! -e config.seed
+          test ! -e configs/router.seed
           test ! -e .github/workflows/build.yml
           test ! -e .github/workflows/publish-existing.yml
+          test ! -e .github/workflows/percival-build.yml
+
+          test -s .github/workflows/percival-head.yml
+          test -s .github/workflows/percival-tested.yml
+          test -s configs/head-diagnostic.seed
+          test -s configs/tested-router.seed
 
           forbidden_pattern='kaka''tar|git[[:space:]]+apply|(^|[[:space:]])patch[[:space:]]'
           if grep -RniE "$forbidden_pattern" \
-            scripts configs source.lock .github/workflows/percival-build.yml; then
+            scripts configs source.lock \
+            .github/workflows/percival-head.yml \
+            .github/workflows/percival-tested.yml; then
             echo "Forbidden secondary source or patching command found." >&2
             exit 1
           fi
 
           grep -Fqx 'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y' \
-            configs/router.seed
-          grep -Fqx 'CONFIG_PACKAGE_iperf3=y' configs/router.seed
-          grep -Fqx 'CONFIG_PACKAGE_kmod-ramoops=y' configs/router.seed
+            configs/head-diagnostic.seed
+          grep -Fqx 'CONFIG_PACKAGE_iperf3=y' configs/head-diagnostic.seed
+          grep -Fqx 'CONFIG_PACKAGE_kmod-ramoops=y' configs/head-diagnostic.seed
+
+          grep -Fqx 'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y' \
+            configs/tested-router.seed
+          if grep -Eq '^CONFIG_PACKAGE_' configs/tested-router.seed; then
+            echo "Track 2 router seed must retain Percival's normal device profile." >&2
+            exit 1
+          fi
+
+          grep -Fq 'UNTESTED-PERCIVAL-' .github/workflows/percival-head.yml
+          if grep -Fq 'gh release' .github/workflows/percival-head.yml; then
+            echo "Track 1 must never create or modify GitHub Releases." >&2
+            exit 1
+          fi
+
+          grep -Fq 'upstream:configs/ap.config' .github/workflows/percival-tested.yml
+          grep -Fq -- '--notes-file upstream-tag-annotation.md' \
+            .github/workflows/percival-tested.yml
+          grep -Fq 'Supersedes:' .github/workflows/percival-tested.yml

@@ -5,7 +5,9 @@ name: Build Dusky Flint 3 firmware
   push:
     branches:
       - main
-      - agent/dusky-custom-build
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write

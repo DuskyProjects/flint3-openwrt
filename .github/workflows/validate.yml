@@ -75,9 +75,15 @@ jobs:
           test ! -e scripts/prepare-backports.sh
           test ! -e build.env
           test ! -e config.seed
+          test ! -e .github/workflows/build.yml
+          test ! -e .github/workflows/publish-existing.yml
 
-          ! grep -RniE 'kakatar|git[[:space:]]+apply|(^|[[:space:]])patch[[:space:]]' \
-            scripts configs source.lock .github/workflows
+          forbidden_pattern='kaka''tar|git[[:space:]]+apply|(^|[[:space:]])patch[[:space:]]'
+          if grep -RniE "$forbidden_pattern" \
+            scripts configs source.lock .github/workflows/percival-build.yml; then
+            echo "Forbidden secondary source or patching command found." >&2
+            exit 1
+          fi
 
           grep -Fqx 'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y' \
             configs/router.seed

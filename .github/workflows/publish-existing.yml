@@ -63,7 +63,8 @@ jobs:
           Experimental OpenWrt firmware for the GL.iNet Flint 3 (GL-BE9300).
 
           Published from successful Actions run ${run_id}.
-          Builder commit: ${source_sha}
+          Firmware builder commit: ${source_sha}
+          Release publisher commit: ${GITHUB_SHA}
 
           Included files:
           - flint3-full-factory.bin — factory/recovery installation image
@@ -84,9 +85,13 @@ jobs:
               --prerelease \
               --repo "$GITHUB_REPOSITORY"
           else
+            # Anchor the release tag to current main. GitHub's built-in
+            # GITHUB_TOKEN cannot create a release targeting an older commit
+            # that differs from main under .github/workflows. The binaries and
+            # notes still identify the exact successful firmware build commit.
             gh release create "$tag" \
               "$factory" "$sysupgrade" "$checksums" \
-              --target "$source_sha" \
+              --target "$GITHUB_SHA" \
               --title "$title" \
               --notes-file release-notes.md \
               --prerelease \

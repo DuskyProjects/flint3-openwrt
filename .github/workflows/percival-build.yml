@@ -1,0 +1,319 @@
+name: Build pinned Percival Flint 3 firmware
+
+"on":
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "latest-tested, an exact tested tag, a full commit SHA, or a branch"
+        required: true
+        default: "latest-tested"
+        type: string
+      publish_release:
+        description: "Publish a prerelease (tested-* tags only)"
+        required: true
+        default: false
+        type: boolean
+      force_rebuild:
+        description: "Rebuild even when the matching release already exists"
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 */6 * * *"
+  push:
+    branches:
+      - "agent/**"
+    paths:
+      - ".github/workflows/percival-build.yml"
+      - "configs/router.seed"
+      - "scripts/**"
+      - "source.lock"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: percival-flint3-firmware
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out builder
+        uses: actions/checkout@v4
+
+      - name: Select requested source policy
+        id: request
+        env:
+          DISPATCH_SOURCE_REF: ${{ inputs.source_ref }}
+          DISPATCH_PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          DISPATCH_FORCE_REBUILD: ${{ inputs.force_rebuild }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source source.lock
+
+          case "$GITHUB_EVENT_NAME" in
+            schedule)
+              requested_ref="latest-tested"
+              publish_release="true"
+              force_rebuild="false"
+              ;;
+            workflow_dispatch)
+              requested_ref="${DISPATCH_SOURCE_REF:-latest-tested}"
+              publish_release="${DISPATCH_PUBLISH_RELEASE:-false}"
+              force_rebuild="${DISPATCH_FORCE_REBUILD:-false}"
+              ;;
+            push)
+              requested_ref="$CI_SOURCE_COMMIT"
+              publish_release="false"
+              force_rebuild="true"
+              ;;
+            *)
+              echo "Unsupported event: $GITHUB_EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            printf 'requested_ref=%s\n' "$requested_ref"
+            printf 'publish_release=%s\n' "$publish_release"
+            printf 'force_rebuild=%s\n' "$force_rebuild"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve exact Percival source
+        id: source
+        env:
+          WORK_ROOT: ${{ github.workspace }}/work
+          REQUESTED_REF: ${{ steps.request.outputs.requested_ref }}
+        run: |
+          set -o pipefail
+          set +e
+          bash scripts/resolve-source.sh "$REQUESTED_REF" \
+            2>&1 | tee resolve-source.log
+          status=${PIPESTATUS[0]}
+          set -e
+
+          if (( status == 3 )) && [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            echo "source_available=false" >> "$GITHUB_OUTPUT"
+            echo "No tested source tag is available yet; scheduled run is a no-op."
+            exit 0
+          fi
+
+          if (( status != 0 )); then
+            exit "$status"
+          fi
+
+          echo "source_available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether a build is required
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_REBUILD: ${{ steps.request.outputs.force_rebuild }}
+          PUBLISH_RELEASE: ${{ steps.request.outputs.publish_release }}
+          RELEASE_TAG: ${{ steps.source.outputs.release_tag }}
+          SOURCE_KIND: ${{ steps.source.outputs.source_kind }}
+          SOURCE_TAG: ${{ steps.source.outputs.source_tag }}
+          SOURCE_AVAILABLE: ${{ steps.source.outputs.source_available }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$SOURCE_AVAILABLE" != "true" ]]; then
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$PUBLISH_RELEASE" == "true" ]]; then
+            if [[ "$SOURCE_KIND" != "tag" || "$SOURCE_TAG" != tested-* ]]; then
+              echo "Publishing is allowed only for tested-* source tags." >&2
+              exit 1
+            fi
+          fi
+
+          should_build="true"
+          if [[ "$PUBLISH_RELEASE" == "true" && "$FORCE_REBUILD" != "true" ]]; then
+            if gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              should_build="false"
+              echo "Release $RELEASE_TAG already exists; no rebuild is needed."
+            fi
+          fi
+
+          printf 'should_build=%s\n' "$should_build" >> "$GITHUB_OUTPUT"
+
+      - name: Free runner disk space
+        if: steps.decision.outputs.should_build == 'true'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Install OpenWrt build dependencies
+        if: steps.decision.outputs.should_build == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses-dev \
+            libssl-dev python3 python3-setuptools python3-pyelftools \
+            rsync swig unzip zlib1g-dev file wget libelf-dev dwarves \
+            ccache coccinelle u-boot-tools zstd
+
+      - name: Restore download cache
+        if: steps.decision.outputs.should_build == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: work/dl
+          key: flint3-dl-${{ runner.os }}-${{ steps.source.outputs.source_commit }}-${{ hashFiles('configs/router.seed') }}
+          restore-keys: |
+            flint3-dl-${{ runner.os }}-
+
+      - name: Restore compiler cache
+        if: steps.decision.outputs.should_build == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: work/ccache
+          key: flint3-ccache-${{ runner.os }}-${{ steps.source.outputs.source_commit }}-${{ hashFiles('configs/router.seed') }}
+          restore-keys: |
+            flint3-ccache-${{ runner.os }}-
+
+      - name: Build firmware
+        if: steps.decision.outputs.should_build == 'true'
+        env:
+          BUILD_JOBS: "3"
+          DOWNLOAD_JOBS: "4"
+          WORK_ROOT: ${{ github.workspace }}/work
+          SOURCE_ENV: ${{ github.workspace }}/source.env
+        run: |
+          set -o pipefail
+          bash scripts/build-percival.sh 2>&1 | tee build.log
+
+      - name: Compress successful build log
+        if: steps.decision.outputs.should_build == 'true' && success()
+        run: zstd -f -10 build.log -o release/build.log.zst
+
+      - name: Save download cache
+        if: steps.decision.outputs.should_build == 'true' && always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: work/dl
+          key: flint3-dl-${{ runner.os }}-${{ steps.source.outputs.source_commit }}-${{ hashFiles('configs/router.seed') }}
+
+      - name: Save compiler cache
+        if: steps.decision.outputs.should_build == 'true' && always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: work/ccache
+          key: flint3-ccache-${{ runner.os }}-${{ steps.source.outputs.source_commit }}-${{ hashFiles('configs/router.seed') }}
+
+      - name: Upload firmware and provenance
+        if: steps.decision.outputs.should_build == 'true' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flint3-percival-${{ steps.source.outputs.source_short }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create release notes
+        if: >-
+          steps.decision.outputs.should_build == 'true' &&
+          success() &&
+          steps.request.outputs.publish_release == 'true'
+        env:
+          SOURCE_TAG: ${{ steps.source.outputs.source_tag }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source source.env
+
+          cat > release-notes.md <<NOTES
+          Experimental OpenWrt router firmware for the GL.iNet Flint 3 (GL-BE9300).
+
+          This build uses Percival's hardware-tested source tag **$SOURCE_TAG**,
+          resolved to commit **$SOURCE_COMMIT**. It uses this repository's small
+          router package seed, not Percival's dumb-AP test configuration.
+
+          - Percival source date: $SOURCE_DATE
+          - Percival source title: $SOURCE_TITLE
+          - Builder commit: $GITHUB_SHA
+          - Target: qualcommbe/ipq53xx, GL.iNet GL-BE9300
+          - External source patches: none
+
+          The factory image is intended for the installation/recovery path
+          documented by Percival and OpenWrt. Back up the device's eMMC/ART data
+          and keep a known recovery method available before flashing.
+
+          ## Upstream known issues
+          NOTES
+
+          if [[ -s release/upstream-known-issues.md ]]; then
+            cat release/upstream-known-issues.md >> release-notes.md
+          else
+            echo "See Percival's README for the current known-issues list." \
+              >> release-notes.md
+          fi
+
+      - name: Publish tested-tag prerelease
+        if: >-
+          steps.decision.outputs.should_build == 'true' &&
+          success() &&
+          steps.request.outputs.publish_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.source.outputs.release_tag }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.source_commit }}
+          SOURCE_TAG: ${{ steps.source.outputs.source_tag }}
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find release -maxdepth 1 -type f -print | sort)
+          (( ${#assets[@]} > 0 ))
+
+          title="Flint 3 — Percival $SOURCE_TAG"
+
+          if gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            existing_body="$(
+              gh release view "$RELEASE_TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --json body --jq .body
+            )"
+            if ! grep -Fq "$SOURCE_COMMIT" <<<"$existing_body"; then
+              echo "Refusing to replace $RELEASE_TAG: its recorded source commit differs." >&2
+              exit 1
+            fi
+
+            gh release upload "$RELEASE_TAG" "${assets[@]}" \
+              --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$RELEASE_TAG" \
+              --title "$title" \
+              --notes-file release-notes.md \
+              --prerelease \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "$title" \
+              --notes-file release-notes.md \
+              --prerelease \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flint3-percival-failure-${{ github.run_id }}
+          path: |
+            resolve-source.log
+            source.env
+            build.log
+          if-no-files-found: warn
+          retention-days: 14

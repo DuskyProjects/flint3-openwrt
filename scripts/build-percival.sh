@@ -12,6 +12,8 @@ OPENWRT_TREE="${OPENWRT_TREE:-$WORK_ROOT/openwrt}"
 DOWNLOAD_CACHE="${DOWNLOAD_CACHE:-$WORK_ROOT/dl}"
 CCACHE_DIR="${CCACHE_DIR:-$WORK_ROOT/ccache}"
 RELEASE_DIR="${RELEASE_DIR:-$ROOT/release}"
+BUILD_VARIANT="${BUILD_VARIANT:-head-diagnostic}"
+CONFIG_SOURCE="${CONFIG_SOURCE:-$ROOT/configs/head-diagnostic.seed}"
 BUILD_JOBS="${BUILD_JOBS:-3}"
 DOWNLOAD_JOBS="${DOWNLOAD_JOBS:-4}"
 CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-3G}"
@@ -43,6 +45,17 @@ if ! git -C "$OPENWRT_TREE" diff --quiet --; then
   echo "Percival source has tracked modifications before the build." >&2
   exit 1
 fi
+
+case "$CONFIG_SOURCE" in
+  upstream:*)
+    config_path="$OPENWRT_TREE/${CONFIG_SOURCE#upstream:}"
+    ;;
+  *)
+    config_path="$CONFIG_SOURCE"
+    ;;
+esac
+
+test -s "$config_path"
 
 rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR" "$DOWNLOAD_CACHE" "$CCACHE_DIR"
@@ -76,19 +89,45 @@ retry_command() {
   retry_command 4 15 ./scripts/feeds update -a
   ./scripts/feeds install -a
 
-  cp "$ROOT/configs/router.seed" .config
+  cp "$config_path" .config
   make defconfig
 
   required_symbols=(
     CONFIG_TARGET_qualcommbe=y
     CONFIG_TARGET_qualcommbe_ipq53xx=y
     CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y
-    CONFIG_TARGET_ROOTFS_SQUASHFS=y
-    CONFIG_TARGET_ROOTFS_INITRAMFS=y
-    CONFIG_PACKAGE_luci=y
-    CONFIG_PACKAGE_iperf3=y
-    CONFIG_PACKAGE_kmod-ramoops=y
   )
+
+  case "$BUILD_VARIANT" in
+    head-diagnostic)
+      required_symbols+=(
+        CONFIG_TARGET_ROOTFS_SQUASHFS=y
+        CONFIG_TARGET_ROOTFS_INITRAMFS=y
+        CONFIG_PACKAGE_luci=y
+        CONFIG_PACKAGE_iperf3=y
+        CONFIG_PACKAGE_kmod-ramoops=y
+      )
+      ;;
+    tested-router)
+      required_symbols+=(
+        CONFIG_TARGET_ROOTFS_SQUASHFS=y
+        CONFIG_TARGET_ROOTFS_INITRAMFS=y
+      )
+      ;;
+    tested-ap)
+      required_symbols+=(
+        CONFIG_TARGET_ROOTFS_INITRAMFS=y
+        CONFIG_PACKAGE_iperf3=y
+        CONFIG_PACKAGE_kmod-ramoops=y
+      )
+      grep -Fqx '# CONFIG_PACKAGE_firewall4 is not set' .config
+      grep -Fqx '# CONFIG_PACKAGE_dnsmasq is not set' .config
+      ;;
+    *)
+      echo "Unsupported build variant: $BUILD_VARIANT" >&2
+      exit 1
+      ;;
+  esac
 
   for symbol in "${required_symbols[@]}"; do
     grep -Fqx "$symbol" .config || {
@@ -98,6 +137,7 @@ retry_command() {
   done
 
   ./scripts/diffconfig.sh > "$RELEASE_DIR/flint3-build.diffconfig"
+  install -m 0644 "$config_path" "$RELEASE_DIR/input.config"
 
   : > "$RELEASE_DIR/feeds-lock.txt"
   for feed_path in feeds/*; do
@@ -154,6 +194,11 @@ if [[ -f "$OPENWRT_TREE/README.md" ]]; then
   ' "$OPENWRT_TREE/README.md" > "$RELEASE_DIR/upstream-known-issues.md"
 fi
 
+if [[ -n "${TAG_ANNOTATION_FILE:-}" && -s "$TAG_ANNOTATION_FILE" ]]; then
+  install -m 0644 "$TAG_ANNOTATION_FILE" \
+    "$RELEASE_DIR/upstream-tag-annotation.md"
+fi
+
 config_hash="$(sha256sum "$RELEASE_DIR/flint3-build.diffconfig" | awk '{print $1}')"
 
 cat > "$RELEASE_DIR/SOURCE-COMMIT.txt" <<SOURCE
@@ -165,6 +210,8 @@ Source tag: ${SOURCE_TAG:-none}
 Source commit: $SOURCE_COMMIT
 Source date: $SOURCE_DATE
 Source title: $SOURCE_TITLE
+Tag object type: ${TAG_OBJECT_TYPE:-none}
+Build variant: $BUILD_VARIANT
 SOURCE
 
 cat > "$RELEASE_DIR/BUILD-MANIFEST.txt" <<MANIFEST
@@ -176,6 +223,8 @@ OpenWrt source tag: ${SOURCE_TAG:-none}
 OpenWrt source commit: $SOURCE_COMMIT
 OpenWrt source date: $SOURCE_DATE
 OpenWrt source title: $SOURCE_TITLE
+OpenWrt tag object type: ${TAG_OBJECT_TYPE:-none}
+Build variant: $BUILD_VARIANT
 Builder repository: ${GITHUB_REPOSITORY:-local}
 Builder commit: ${GITHUB_SHA:-local}
 Workflow run: ${GITHUB_RUN_ID:-local}
@@ -184,7 +233,9 @@ Runner architecture: ${RUNNER_ARCH:-unknown}
 Configuration SHA256: $config_hash
 Build jobs: $BUILD_JOBS
 Download jobs: $DOWNLOAD_JOBS
+External source patches: none
 MANIFEST
 
 ccache --show-stats || true
-printf 'Built Percival %s without external patches.\n' "$SOURCE_COMMIT"
+printf 'Built Percival %s variant %s without external patches.\n' \
+  "$SOURCE_COMMIT" "$BUILD_VARIANT"

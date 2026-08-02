@@ -2,6 +2,11 @@ name: Build Perceival Flint 3 firmware
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - build-trigger.txt
 
 permissions:
   contents: write

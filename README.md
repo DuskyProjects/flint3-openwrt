@@ -52,16 +52,18 @@ Track 2 polls the newest annotated `tested-*` tag every six hours, resolves the
 tag to its exact commit, verifies that it is an annotated tag, and preserves the
 tag annotation verbatim.
 
-Track 2 builds these variants:
+Every tested tag produces two variants:
 
 1. **Router** — `configs/tested-router.seed` selects the GL-BE9300 target and
    retains Percival's normal device profile without adding packages.
-2. **AP** — when the selected tested source contains `configs/ap.config`, the
-   workflow builds that upstream sanitized dumb-AP configuration unchanged.
+2. **AP** — the exact tested source commit is built with Percival's sanitized
+   dumb-AP package selection from the separately pinned `configs/ap.config`
+   commit recorded in `source.lock`.
 
-A tested tag created before `configs/ap.config` existed produces only the router
-variant. Pull-request validation separately builds the current pinned AP source
-so the AP path is tested before a later tagged release activates it.
+The AP configuration is pinned by both commit and Git blob ID. This supports
+older tested tags that predate the checked-in `configs/ap.config` file without
+using moving HEAD. AP artifacts record the tested source commit, AP
+configuration commit, configuration URL, and input SHA256 independently.
 
 Successful Track 2 builds are Actions artifacts named:
 
@@ -71,10 +73,11 @@ TESTED-<upstream-tag>-ap
 ```
 
 Scheduled Track 2 runs publish a prerelease named `percival-<upstream-tag>`.
-The GitHub Release body is the upstream annotated tag message verbatim. Firmware
-assets retain the full OpenWrt filename and add only a final `-router` or `-ap`
-variant suffix before the extension so both variants can coexist in one
-release. The workflow also publishes a combined `SHA256SUMS`.
+Publication is blocked unless both variants succeeded. The GitHub Release body
+is the upstream annotated tag message verbatim. Firmware assets retain the full
+OpenWrt filename and add only a final `-router` or `-ap` suffix before the
+extension so both variants can coexist. The release also contains a combined
+`SHA256SUMS` and the per-variant provenance files.
 
 When a tag annotation contains a `Supersedes:` trailer, the corresponding older
 builder release is retitled with a `[SUPERSEDED]` prefix after the replacement
@@ -92,7 +95,8 @@ The validation workflow runs:
 - ShellCheck;
 - source-policy assertions;
 - checks that Track 1 cannot contain release commands;
-- checks that Track 2 uses the upstream AP configuration and annotated tag body;
+- checks that Track 2 always contains router and AP variants;
+- checks that the Percival AP configuration is pinned by commit and blob;
 - checks that legacy and collapsed workflows remain absent.
 
 ## Build outputs
@@ -117,7 +121,8 @@ Each successful firmware variant contains:
 The build fails on zero-byte downloads, HTML error pages stored as source
 archives, missing or duplicate factory/sysupgrade images, an unparseable
 factory FIT, missing `hlos` or `rootfs` FIT sections, checksum failures, source
-commit mismatches, unexpected origin URLs, or tracked source modifications.
+commit mismatches, unexpected origin URLs, AP configuration commit/blob
+mismatches, or tracked source modifications.
 
 ## Local validation
 

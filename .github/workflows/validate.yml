@@ -70,6 +70,9 @@ jobs:
           grep -Fqx 'OPENWRT_REPOSITORY=perceival/openwrt-flint3' source.lock
           grep -Fqx 'OPENWRT_BRANCH=flint3-be9300' source.lock
           grep -Eq '^CI_SOURCE_COMMIT=[0-9a-f]{40}$' source.lock
+          grep -Eq '^AP_CONFIG_COMMIT=[0-9a-f]{40}$' source.lock
+          grep -Fqx 'AP_CONFIG_PATH=configs/ap.config' source.lock
+          grep -Eq '^AP_CONFIG_BLOB=[0-9a-f]{40}$' source.lock
 
           test ! -d patches
           test ! -e scripts/prepare-backports.sh
@@ -112,7 +115,11 @@ jobs:
             exit 1
           fi
 
-          grep -Fq 'upstream:configs/ap.config' .github/workflows/percival-tested.yml
+          grep -Fq '"slug":"router"' .github/workflows/percival-tested.yml
+          grep -Fq '"slug":"ap"' .github/workflows/percival-tested.yml
+          grep -Fq 'AP_CONFIG_COMMIT' .github/workflows/percival-tested.yml
+          grep -Fq 'AP_CONFIG_BLOB' .github/workflows/percival-tested.yml
+          grep -Fq 'Require both tested variants' .github/workflows/percival-tested.yml
           grep -Fq -- '--notes-file upstream-tag-annotation.md' \
             .github/workflows/percival-tested.yml
           grep -Fq 'Supersedes:' .github/workflows/percival-tested.yml

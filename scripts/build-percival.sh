@@ -14,6 +14,8 @@ CCACHE_DIR="${CCACHE_DIR:-$WORK_ROOT/ccache}"
 RELEASE_DIR="${RELEASE_DIR:-$ROOT/release}"
 BUILD_VARIANT="${BUILD_VARIANT:-head-diagnostic}"
 CONFIG_SOURCE="${CONFIG_SOURCE:-$ROOT/configs/head-diagnostic.seed}"
+CONFIG_PROVENANCE="${CONFIG_PROVENANCE:-$CONFIG_SOURCE}"
+CONFIG_SOURCE_COMMIT="${CONFIG_SOURCE_COMMIT:-${GITHUB_SHA:-local}}"
 BUILD_JOBS="${BUILD_JOBS:-3}"
 DOWNLOAD_JOBS="${DOWNLOAD_JOBS:-4}"
 CCACHE_MAXSIZE="${CCACHE_MAXSIZE:-3G}"
@@ -50,12 +52,16 @@ case "$CONFIG_SOURCE" in
   upstream:*)
     config_path="$OPENWRT_TREE/${CONFIG_SOURCE#upstream:}"
     ;;
-  *)
+  /*)
     config_path="$CONFIG_SOURCE"
+    ;;
+  *)
+    config_path="$ROOT/$CONFIG_SOURCE"
     ;;
 esac
 
 test -s "$config_path"
+config_input_hash="$(sha256sum "$config_path" | awk '{print $1}')"
 
 rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR" "$DOWNLOAD_CACHE" "$CCACHE_DIR"
@@ -199,7 +205,9 @@ if [[ -n "${TAG_ANNOTATION_FILE:-}" && -s "$TAG_ANNOTATION_FILE" ]]; then
     "$RELEASE_DIR/upstream-tag-annotation.md"
 fi
 
-config_hash="$(sha256sum "$RELEASE_DIR/flint3-build.diffconfig" | awk '{print $1}')"
+expanded_config_hash="$(
+  sha256sum "$RELEASE_DIR/flint3-build.diffconfig" | awk '{print $1}'
+)"
 
 cat > "$RELEASE_DIR/SOURCE-COMMIT.txt" <<SOURCE
 Repository: https://github.com/$OPENWRT_REPOSITORY
@@ -212,6 +220,9 @@ Source date: $SOURCE_DATE
 Source title: $SOURCE_TITLE
 Tag object type: ${TAG_OBJECT_TYPE:-none}
 Build variant: $BUILD_VARIANT
+Configuration source: $CONFIG_PROVENANCE
+Configuration source commit: $CONFIG_SOURCE_COMMIT
+Configuration input SHA256: $config_input_hash
 SOURCE
 
 cat > "$RELEASE_DIR/BUILD-MANIFEST.txt" <<MANIFEST
@@ -225,12 +236,15 @@ OpenWrt source date: $SOURCE_DATE
 OpenWrt source title: $SOURCE_TITLE
 OpenWrt tag object type: ${TAG_OBJECT_TYPE:-none}
 Build variant: $BUILD_VARIANT
+Configuration source: $CONFIG_PROVENANCE
+Configuration source commit: $CONFIG_SOURCE_COMMIT
+Configuration input SHA256: $config_input_hash
+Expanded configuration SHA256: $expanded_config_hash
 Builder repository: ${GITHUB_REPOSITORY:-local}
 Builder commit: ${GITHUB_SHA:-local}
 Workflow run: ${GITHUB_RUN_ID:-local}
 Runner OS: ${RUNNER_OS:-unknown}
 Runner architecture: ${RUNNER_ARCH:-unknown}
-Configuration SHA256: $config_hash
 Build jobs: $BUILD_JOBS
 Download jobs: $DOWNLOAD_JOBS
 External source patches: none

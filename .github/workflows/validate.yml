@@ -1,0 +1,85 @@
+name: Validate Percival builder
+
+"on":
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "configs/**"
+      - "scripts/**"
+      - "source.lock"
+      - "README.md"
+  push:
+    branches:
+      - main
+      - "agent/**"
+    paths:
+      - ".github/workflows/**"
+      - "configs/**"
+      - "scripts/**"
+      - "source.lock"
+      - "README.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out builder
+        uses: actions/checkout@v4
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-yaml shellcheck
+
+      - name: Validate workflow YAML
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          for path in sorted(Path('.github/workflows').glob('*.yml')):
+              with path.open('r', encoding='utf-8') as handle:
+                  yaml.safe_load(handle)
+              print(f'validated {path}')
+          PY
+
+      - name: Run actionlint
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+      - name: Validate shell scripts
+        run: |
+          bash -n scripts/*.sh
+          shellcheck -S warning scripts/*.sh
+
+      - name: Enforce Percival-only source policy
+        run: |
+          set -euo pipefail
+
+          grep -Fqx 'OPENWRT_REPOSITORY=perceival/openwrt-flint3' source.lock
+          grep -Fqx 'OPENWRT_BRANCH=flint3-be9300' source.lock
+          grep -Eq '^CI_SOURCE_COMMIT=[0-9a-f]{40}$' source.lock
+
+          test ! -d patches
+          test ! -e scripts/prepare-backports.sh
+          test ! -e build.env
+          test ! -e config.seed
+
+          ! grep -RniE 'kakatar|git[[:space:]]+apply|(^|[[:space:]])patch[[:space:]]' \
+            scripts configs source.lock .github/workflows
+
+          grep -Fqx 'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y' \
+            configs/router.seed
+          grep -Fqx 'CONFIG_PACKAGE_iperf3=y' configs/router.seed
+          grep -Fqx 'CONFIG_PACKAGE_kmod-ramoops=y' configs/router.seed

@@ -35,6 +35,12 @@ grep -Fq 'pinctrl-0 = <&usb_pins>;' "$usb_dts"
 grep -Fq 'pinctrl-names = "default";' "$usb_dts"
 grep -Fq 'qcom,multiplexed-phy;' "$usb_dts"
 
+# IPQ5332 uses the built-in Qualcomm M31 USB PHY driver. There is no
+# kmod-phy-qcom-uniphy-usb package in this source tree.
+ipq53xx_kernel_config="$OPENWRT_TREE/target/linux/qualcommbe/ipq53xx/config-default"
+test -f "$ipq53xx_kernel_config"
+grep -Fqx 'CONFIG_PHY_QCOM_M31_USB=y' "$ipq53xx_kernel_config"
+
 kernel_patch_dir="$OPENWRT_TREE/target/linux/qualcommbe/patches-6.18"
 test -d "$kernel_patch_dir"
 install -m 0644 \
@@ -83,6 +89,22 @@ grep -Fqx 'PKG_HASH:=bd694978c0ae6cce318e02ca71189c28deb09e8d9ac3d3e8c18ca0ed264
   grep -Fq 'CONFIG_PACKAGE_iperf3=y' .config
   grep -Fq 'CONFIG_PACKAGE_kmod-usb-dwc3-qcom=y' .config
 
+  # Enforce one implementation for each hardware/service role.
+  forbidden_packages=(
+    kmod-usb-dwc3-of-simple
+    luci-app-samba4
+    samba4-server
+    luci-app-nextdns
+    nextdns
+  )
+
+  for package in "${forbidden_packages[@]}"; do
+    if grep -Eq "^CONFIG_PACKAGE_${package}=[ym]$" .config; then
+      echo "Forbidden package selected: $package" >&2
+      exit 1
+    fi
+  done
+
   # Use the archive and hash declared by Percival's source tree unchanged.
   make package/kernel/mac80211/download V=s
   make download -j"$JOBS"
@@ -116,4 +138,4 @@ install -m 0644 "$OPENWRT_TREE/.config" "$RELEASE_DIR/flint3-full.config"
   sha256sum flint3-full-factory.bin flint3-sysupgrade.bin > SHA256SUMS
 )
 
-printf 'Built Percival %s with the Flint 3 USB fixes and Dusky GUI package manifest.\n' "$OPENWRT_COMMIT"
+printf 'Built Percival %s with Flint 3 USB power, ksmbd NAS, dnsproxy, and the validated Dusky package baseline.\n' "$OPENWRT_COMMIT"

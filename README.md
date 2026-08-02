@@ -154,7 +154,8 @@ partition persistently by UUID at:
 The firmware contains the required drivers and services. The disk UUID, ksmbd
 users, passwords, share definitions and permissions are configuration data and
 must come from the router backup or a device-specific restore process; they are
-not hardcoded into a public firmware image.
+not hardcoded into a public firmware image. Until that restore is applied, the
+packages will exist but `/mnt/nas` and its shares will not configure themselves.
 
 ### ZRAM
 

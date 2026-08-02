@@ -18,8 +18,12 @@ for command_name in git python3 sha256sum spatch tar zstd; do
 done
 
 test -f "$MAC80211_MAKEFILE"
-grep -Fqx "PKG_UPSTREAM_VERSION:=$BACKPORTS_KERNEL_VERSION" "$MAC80211_MAKEFILE"
-grep -Fqx "PKG_SOURCE:=$BACKPORTS_ARCHIVE" "$MAC80211_MAKEFILE"
+upstream_version="$(sed -n 's/^PKG_UPSTREAM_VERSION:=//p' "$MAC80211_MAKEFILE" | head -n1)"
+source_template="$(sed -n 's/^PKG_SOURCE:=//p' "$MAC80211_MAKEFILE" | head -n1)"
+source_file="${source_template//\$\(PKG_UPSTREAM_VERSION\)/$upstream_version}"
+
+test "$upstream_version" = "$BACKPORTS_KERNEL_VERSION"
+test "$source_file" = "$BACKPORTS_ARCHIVE"
 
 mkdir -p "$DOWNLOAD_DIR"
 

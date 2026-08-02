@@ -44,44 +44,52 @@ Track 1 never creates or modifies a GitHub Release. If an unexpired artifact
 already exists for the same source commit, a scheduled run exits without
 rebuilding it.
 
-## Track 2: tested Percival tags
+## Track 2: published Percival releases
 
 Workflow: `.github/workflows/percival-tested.yml`
 
-Track 2 polls the newest annotated `tested-*` tag every six hours, resolves the
-tag to its exact commit, verifies that it is an annotated tag, and preserves the
-tag annotation verbatim.
+Track 2 does **not** build from tags alone. It queries Percival's GitHub
+Releases and becomes eligible only when a published, non-draft `tested-*`
+release actually exists. A `tested-*` Git tag without a corresponding GitHub
+Release is ignored.
 
-Every tested tag produces two variants:
+Because Percival has not published a qualifying GitHub Release yet, Track 2 is
+currently expected to resolve successfully, report that no release exists, and
+skip every firmware build and publication job.
+
+When Percival publishes a qualifying release, Track 2 will resolve its release
+tag to an exact commit and build two variants:
 
 1. **Router** — `configs/tested-router.seed` selects the GL-BE9300 target and
    retains Percival's normal device profile without adding packages.
-2. **AP** — the exact tested source commit is built with Percival's sanitized
+2. **AP** — the exact released source commit is built with Percival's sanitized
    dumb-AP package selection from the separately pinned `configs/ap.config`
    commit recorded in `source.lock`.
 
-The AP configuration is pinned by both commit and Git blob ID. This supports
-older tested tags that predate the checked-in `configs/ap.config` file without
-using moving HEAD. AP artifacts record the tested source commit, AP
+The AP configuration is pinned by both commit and Git blob ID. This supports a
+released source snapshot that predates the checked-in `configs/ap.config` file
+without using moving HEAD. AP artifacts record the released source commit, AP
 configuration commit, configuration URL, and input SHA256 independently.
 
-Successful Track 2 builds are Actions artifacts named:
+Successful Track 2 builds will be Actions artifacts named:
 
 ```text
-TESTED-<upstream-tag>-router
-TESTED-<upstream-tag>-ap
+RELEASED-<upstream-release-tag>-router
+RELEASED-<upstream-release-tag>-ap
 ```
 
-Scheduled Track 2 runs publish a prerelease named `percival-<upstream-tag>`.
-Publication is blocked unless both variants succeeded. The GitHub Release body
-is the upstream annotated tag message verbatim. Firmware assets retain the full
-OpenWrt filename and add only a final `-router` or `-ap` suffix before the
-extension so both variants can coexist. The release also contains a combined
-`SHA256SUMS` and the per-variant provenance files.
+Scheduled Track 2 runs publish a builder prerelease named
+`percival-<upstream-release-tag>`. Publication is blocked unless both variants
+succeeded. The builder release body is copied from Percival's actual GitHub
+Release body, not inferred from a tag. Firmware assets retain the full OpenWrt
+filename and add only a final `-router` or `-ap` suffix before the extension so
+both variants can coexist. The release also contains a combined `SHA256SUMS`,
+the upstream release metadata, and per-variant provenance files.
 
-When a tag annotation contains a `Supersedes:` trailer, the corresponding older
-builder release is retitled with a `[SUPERSEDED]` prefix after the replacement
-release succeeds. Its original release body is left unchanged.
+When an upstream release body contains a `Supersedes:` trailer, the
+corresponding older builder release is retitled with a `[SUPERSEDED]` prefix
+after the replacement release succeeds. Its original release body is left
+unchanged.
 
 ## Validation workflow
 
@@ -95,7 +103,9 @@ The validation workflow runs:
 - ShellCheck;
 - source-policy assertions;
 - checks that Track 1 cannot contain release commands;
-- checks that Track 2 always contains router and AP variants;
+- checks that Track 2 requires an actual upstream GitHub Release;
+- checks that a tag-only snapshot cannot activate Track 2 builds;
+- checks that future Track 2 releases contain router and AP variants;
 - checks that the Percival AP configuration is pinned by commit and blob;
 - checks that legacy and collapsed workflows remain absent.
 
@@ -124,9 +134,7 @@ factory FIT, missing `hlos` or `rootfs` FIT sections, checksum failures, source
 commit mismatches, unexpected origin URLs, AP configuration commit/blob
 mismatches, or tracked source modifications.
 
-## Local validation
-
-Resolve an exact source first, then select a build variant:
+## Local Track 1 validation
 
 ```bash
 bash scripts/resolve-source.sh flint3-be9300
@@ -136,12 +144,5 @@ RELEASE_DIR="$PWD/release/head-diagnostic" \
 bash scripts/build-percival.sh
 ```
 
-For a tested router build:
-
-```bash
-bash scripts/resolve-source.sh latest-tested
-BUILD_VARIANT=tested-router \
-CONFIG_SOURCE="$PWD/configs/tested-router.seed" \
-RELEASE_DIR="$PWD/release/router" \
-bash scripts/build-percival.sh
-```
+Track 2 should not be run locally against a bare tag. Its source must first be
+verified as an actual Percival GitHub Release by the workflow.

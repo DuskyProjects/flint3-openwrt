@@ -1,22 +1,30 @@
 From: DuskyProjects <actions@users.noreply.github.com>
-Subject: [PATCH] qualcommbe: gl-be9300: enable the flat IPQ5332 USB node
+Subject: [PATCH] qualcommbe: gl-be9300: enable USB mux and port power
 
 The IPQ5332 kernel patch gives the controller both usb and usb_dwc labels
 on one flat qcom,snps-dwc3 node. Use the primary usb label in the board
 DTS and opt this board into the shared USB/PCIe PHY mux selection.
 
+The board DTS already defines usb_pins with GPIO 16 configured as an
+output-high USB power enable, but the USB controller did not select that
+pinctrl state. Without it the DWC3/xHCI host and both root hubs probe,
+while the external port receives no VBUS and cannot enumerate devices.
+Attach usb_pins to the controller so the port's 5 V supply is enabled.
+
 ---
- target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts | 3 ++-
- 1 file changed, 2 insertions(+), 1 deletion(-)
+ target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
 
 --- a/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts
 +++ b/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts
-@@ -2,7 +2,8 @@
+@@ -2,7 +2,10 @@
  	status = "okay";
  };
  
 -&usb_dwc {
 +&usb {
++	pinctrl-0 = <&usb_pins>;
++	pinctrl-names = "default";
 +	qcom,multiplexed-phy;
  	status = "okay";
  };

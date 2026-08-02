@@ -1,3 +1,6 @@
 /work/
 /release/
+/source.env
 /build.log
+/resolve-source.log
+/release-notes.md

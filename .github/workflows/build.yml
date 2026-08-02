@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: flint3-perceival-build
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-and-release:
@@ -24,14 +24,34 @@ jobs:
       - name: Check out builder
         uses: actions/checkout@v4
 
+      - name: Record build start
+        run: |
+          set -euo pipefail
+          printf '%s\n' start > .build-stage
+          cat > build-status.txt <<STATUS
+state=running
+stage=start
+run_id=$GITHUB_RUN_ID
+run_url=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+trigger_commit=$GITHUB_SHA
+source_policy=pinned perceival/openwrt-flint3 base only
+STATUS
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add build-status.txt
+          git commit -m 'Record firmware build start [skip ci]'
+          git push origin HEAD:main
+
       - name: Free runner disk space
         run: |
+          printf '%s\n' free-runner-space > .build-stage
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
           sudo docker image prune --all --force || true
           df -h
 
       - name: Install OpenWrt build dependencies
         run: |
+          printf '%s\n' dependencies > .build-stage
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential clang flex bison g++ gawk \
@@ -43,6 +63,7 @@ jobs:
 
       - name: Validate before compiling
         run: |
+          printf '%s\n' validation > .build-stage
           set -euo pipefail
           bash -n \
             scripts/apply-curated-patches.sh \
@@ -90,7 +111,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           JOBS: '4'
           CCACHE_MAX_SIZE: '3G'
-        run: bash scripts/nightly-or-reuse.sh
+        run: |
+          printf '%s\n' firmware-build > .build-stage
+          mkdir -p nightly-work
+          set +e
+          bash scripts/nightly-or-reuse.sh 2>&1 | tee nightly-work/workflow-build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          exit "$status"
 
       - name: Save updated OpenWrt caches
         if: always()
@@ -104,6 +132,7 @@ jobs:
 
       - name: Verify release payload
         run: |
+          printf '%s\n' verify-payload > .build-stage
           set -euo pipefail
           source nightly-release.env
           test -s release-notes.md
@@ -129,6 +158,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          printf '%s\n' publish-release > .build-stage
           set -euo pipefail
           source nightly-release.env
 
@@ -163,6 +193,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          printf '%s\n' verify-release > .build-stage
           set -euo pipefail
           source nightly-release.env
 
@@ -175,3 +206,29 @@ jobs:
           test "$(gh release view "$RELEASE_TAG" --json assets --jq '.assets | length')" -eq 2
           test -n "$(gh release view "$RELEASE_TAG" --json body --jq '.body')"
           gh release view "$RELEASE_TAG" --json url --jq '.url'
+
+      - name: Record final build status
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          stage="$(cat .build-stage 2>/dev/null || printf '%s' unknown)"
+          {
+            printf 'state=%s\n' "$JOB_STATUS"
+            printf 'stage=%s\n' "$stage"
+            printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+            printf 'run_url=https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf 'trigger_commit=%s\n' "$GITHUB_SHA"
+            printf 'source_policy=pinned perceival/openwrt-flint3 base only\n'
+            if [[ -s nightly-work/workflow-build.log ]]; then
+              printf '\n--- workflow build log tail ---\n'
+              tail -n 200 nightly-work/workflow-build.log
+            fi
+          } > build-status.txt
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add build-status.txt
+          git commit -m "Record firmware build $JOB_STATUS [skip ci]" || exit 0
+          git push origin HEAD:main

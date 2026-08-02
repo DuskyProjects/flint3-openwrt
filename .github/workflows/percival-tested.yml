@@ -1,0 +1,538 @@
+name: Track 2 - Build tested Percival release
+
+"on":
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "latest-tested or an exact tested-* tag"
+        required: true
+        default: "latest-tested"
+        type: string
+      publish_release:
+        description: "Publish or update the tested-tag prerelease"
+        required: true
+        default: false
+        type: boolean
+      force_rebuild:
+        description: "Rebuild even when the matching release exists"
+        required: true
+        default: false
+        type: boolean
+  schedule:
+    - cron: "37 */6 * * *"
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - ".github/workflows/percival-tested.yml"
+      - "configs/tested-router.seed"
+      - "scripts/**"
+      - "source.lock"
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: percival-tested-${{ github.event.pull_request.number || 'scheduled' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      requested_ref: ${{ steps.request.outputs.requested_ref }}
+      publish_release: ${{ steps.request.outputs.publish_release }}
+      force_rebuild: ${{ steps.request.outputs.force_rebuild }}
+      should_build: ${{ steps.decision.outputs.should_build }}
+      source_tag: ${{ steps.source.outputs.source_tag }}
+      source_commit: ${{ steps.source.outputs.source_commit }}
+      source_short: ${{ steps.source.outputs.source_short }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
+      has_ap_config: ${{ steps.policy.outputs.has_ap_config }}
+      matrix: ${{ steps.policy.outputs.matrix }}
+
+    steps:
+      - name: Check out builder
+        uses: actions/checkout@v4
+
+      - name: Select tested source policy
+        id: request
+        env:
+          DISPATCH_SOURCE_REF: ${{ inputs.source_ref }}
+          DISPATCH_PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          DISPATCH_FORCE_REBUILD: ${{ inputs.force_rebuild }}
+        run: |
+          set -euo pipefail
+
+          case "$GITHUB_EVENT_NAME" in
+            schedule)
+              requested_ref="latest-tested"
+              publish_release="true"
+              force_rebuild="false"
+              ;;
+            workflow_dispatch)
+              requested_ref="${DISPATCH_SOURCE_REF:-latest-tested}"
+              publish_release="${DISPATCH_PUBLISH_RELEASE:-false}"
+              force_rebuild="${DISPATCH_FORCE_REBUILD:-false}"
+              ;;
+            pull_request)
+              requested_ref="latest-tested"
+              publish_release="false"
+              force_rebuild="true"
+              ;;
+            *)
+              echo "Unsupported event: $GITHUB_EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
+
+          {
+            printf 'requested_ref=%s\n' "$requested_ref"
+            printf 'publish_release=%s\n' "$publish_release"
+            printf 'force_rebuild=%s\n' "$force_rebuild"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve annotated tested tag
+        id: source
+        env:
+          WORK_ROOT: ${{ github.workspace }}/resolve-work
+          SOURCE_ENV: ${{ github.workspace }}/resolve-source.env
+          TAG_ANNOTATION_FILE: ${{ github.workspace }}/upstream-tag-annotation.md
+          REQUESTED_REF: ${{ steps.request.outputs.requested_ref }}
+        run: |
+          set -o pipefail
+          bash scripts/resolve-source.sh "$REQUESTED_REF" \
+            2>&1 | tee resolve-source.log
+
+      - name: Enforce tested policy and create build matrix
+        id: policy
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source resolve-source.env
+
+          [[ "$SOURCE_KIND" == tag ]]
+          [[ "$SOURCE_TAG" == tested-* ]]
+          [[ "$TAG_OBJECT_TYPE" == tag ]]
+          test -s upstream-tag-annotation.md
+
+          if [[ "$HAS_AP_CONFIG" == true ]]; then
+            matrix='{"include":[{"variant":"tested-router","slug":"router","config":"configs/tested-router.seed"},{"variant":"tested-ap","slug":"ap","config":"upstream:configs/ap.config"}]}'
+          else
+            matrix='{"include":[{"variant":"tested-router","slug":"router","config":"configs/tested-router.seed"}]}'
+          fi
+
+          {
+            printf 'has_ap_config=%s\n' "$HAS_AP_CONFIG"
+            printf 'matrix=%s\n' "$matrix"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether tested release needs a build
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_REBUILD: ${{ steps.request.outputs.force_rebuild }}
+          PUBLISH_RELEASE: ${{ steps.request.outputs.publish_release }}
+          RELEASE_TAG: ${{ steps.source.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          should_build="true"
+
+          if [[ "$PUBLISH_RELEASE" == true && "$FORCE_REBUILD" != true ]]; then
+            if gh release view "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              should_build="false"
+              echo "Release $RELEASE_TAG already exists; no rebuild is needed."
+            fi
+          fi
+
+          printf 'should_build=%s\n' "$should_build" >> "$GITHUB_OUTPUT"
+
+      - name: Upload resolution diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TESTED-RESOLUTION-${{ steps.source.outputs.source_short || github.run_id }}
+          path: |
+            resolve-source.log
+            resolve-source.env
+            upstream-tag-annotation.md
+          if-no-files-found: warn
+          retention-days: 14
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out builder
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Install OpenWrt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses-dev \
+            libssl-dev python3 python3-setuptools python3-pyelftools \
+            rsync swig unzip zlib1g-dev file wget libelf-dev dwarves \
+            ccache coccinelle u-boot-tools zstd
+
+      - name: Resolve exact tested source
+        env:
+          WORK_ROOT: ${{ github.workspace }}/work/${{ matrix.slug }}
+          SOURCE_ENV: ${{ github.workspace }}/${{ matrix.slug }}-source.env
+          TAG_ANNOTATION_FILE: ${{ github.workspace }}/${{ matrix.slug }}-tag-annotation.md
+          SOURCE_TAG: ${{ needs.resolve.outputs.source_tag }}
+          EXPECTED_COMMIT: ${{ needs.resolve.outputs.source_commit }}
+        run: |
+          set -o pipefail
+          bash scripts/resolve-source.sh "$SOURCE_TAG" \
+            2>&1 | tee "${{ matrix.slug }}-resolve.log"
+          # shellcheck disable=SC1090
+          source "${{ matrix.slug }}-source.env"
+          [[ "$SOURCE_COMMIT" == "$EXPECTED_COMMIT" ]]
+
+      - name: Restore download cache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/${{ matrix.slug }}/dl
+          key: track2-${{ matrix.slug }}-dl-${{ runner.os }}-${{ needs.resolve.outputs.source_commit }}-${{ hashFiles('configs/tested-router.seed') }}
+          restore-keys: |
+            track2-${{ matrix.slug }}-dl-${{ runner.os }}-
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/${{ matrix.slug }}/ccache
+          key: track2-${{ matrix.slug }}-ccache-${{ runner.os }}-${{ needs.resolve.outputs.source_commit }}-${{ hashFiles('configs/tested-router.seed') }}
+          restore-keys: |
+            track2-${{ matrix.slug }}-ccache-${{ runner.os }}-
+
+      - name: Build tested variant
+        env:
+          BUILD_JOBS: "3"
+          DOWNLOAD_JOBS: "4"
+          BUILD_VARIANT: ${{ matrix.variant }}
+          CONFIG_SOURCE: ${{ matrix.config }}
+          RELEASE_DIR: ${{ github.workspace }}/release/${{ matrix.slug }}
+          WORK_ROOT: ${{ github.workspace }}/work/${{ matrix.slug }}
+          SOURCE_ENV: ${{ github.workspace }}/${{ matrix.slug }}-source.env
+        run: |
+          set -o pipefail
+          bash scripts/build-percival.sh \
+            2>&1 | tee "${{ matrix.slug }}-build.log"
+
+      - name: Compress successful build log
+        if: success()
+        run: |
+          zstd -f -10 "${{ matrix.slug }}-build.log" \
+            -o "release/${{ matrix.slug }}/build.log.zst"
+
+      - name: Save download cache
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: work/${{ matrix.slug }}/dl
+          key: track2-${{ matrix.slug }}-dl-${{ runner.os }}-${{ needs.resolve.outputs.source_commit }}-${{ hashFiles('configs/tested-router.seed') }}
+
+      - name: Save compiler cache
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: work/${{ matrix.slug }}/ccache
+          key: track2-${{ matrix.slug }}-ccache-${{ runner.os }}-${{ needs.resolve.outputs.source_commit }}-${{ hashFiles('configs/tested-router.seed') }}
+
+      - name: Upload tested variant artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TESTED-${{ needs.resolve.outputs.source_tag }}-${{ matrix.slug }}
+          path: release/${{ matrix.slug }}/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TESTED-${{ matrix.slug }}-FAILURE-${{ github.run_id }}
+          path: |
+            ${{ matrix.slug }}-resolve.log
+            ${{ matrix.slug }}-source.env
+            ${{ matrix.slug }}-build.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  validate-current-ap:
+    needs: resolve
+    if: >-
+      github.event_name == 'pull_request' &&
+      needs.resolve.outputs.has_ap_config != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out builder
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Install OpenWrt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses-dev \
+            libssl-dev python3 python3-setuptools python3-pyelftools \
+            rsync swig unzip zlib1g-dev file wget libelf-dev dwarves \
+            ccache coccinelle u-boot-tools zstd
+
+      - name: Resolve pinned current Percival source
+        id: current
+        env:
+          WORK_ROOT: ${{ github.workspace }}/work/ap-validation
+          SOURCE_ENV: ${{ github.workspace }}/ap-validation-source.env
+          TAG_ANNOTATION_FILE: ${{ github.workspace }}/ap-validation-tag.md
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source source.lock
+          bash scripts/resolve-source.sh "$CI_SOURCE_COMMIT" \
+            2>&1 | tee ap-validation-resolve.log
+          test -s work/ap-validation/openwrt/configs/ap.config
+
+      - name: Restore AP validation download cache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/ap-validation/dl
+          key: track2-ap-validation-dl-${{ runner.os }}-${{ hashFiles('source.lock') }}
+          restore-keys: |
+            track2-ap-validation-dl-${{ runner.os }}-
+
+      - name: Restore AP validation compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/ap-validation/ccache
+          key: track2-ap-validation-ccache-${{ runner.os }}-${{ hashFiles('source.lock') }}
+          restore-keys: |
+            track2-ap-validation-ccache-${{ runner.os }}-
+
+      - name: Build validation-only AP image
+        env:
+          BUILD_JOBS: "3"
+          DOWNLOAD_JOBS: "4"
+          BUILD_VARIANT: tested-ap
+          CONFIG_SOURCE: upstream:configs/ap.config
+          RELEASE_DIR: ${{ github.workspace }}/release/ap-validation
+          WORK_ROOT: ${{ github.workspace }}/work/ap-validation
+          SOURCE_ENV: ${{ github.workspace }}/ap-validation-source.env
+        run: |
+          set -o pipefail
+          bash scripts/build-percival.sh \
+            2>&1 | tee ap-validation-build.log
+
+      - name: Compress AP validation log
+        if: success()
+        run: |
+          zstd -f -10 ap-validation-build.log \
+            -o release/ap-validation/build.log.zst
+
+      - name: Save AP validation download cache
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: work/ap-validation/dl
+          key: track2-ap-validation-dl-${{ runner.os }}-${{ hashFiles('source.lock') }}
+
+      - name: Save AP validation compiler cache
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: work/ap-validation/ccache
+          key: track2-ap-validation-ccache-${{ runner.os }}-${{ hashFiles('source.lock') }}
+
+      - name: Upload validation-only AP artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VALIDATION-ONLY-PERCIVAL-AP-${{ github.run_id }}
+          path: release/ap-validation/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload AP validation failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VALIDATION-AP-FAILURE-${{ github.run_id }}
+          path: |
+            ap-validation-resolve.log
+            ap-validation-source.env
+            ap-validation-build.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  publish:
+    needs:
+      - resolve
+      - build
+    if: >-
+      always() &&
+      needs.resolve.outputs.should_build == 'true' &&
+      needs.resolve.outputs.publish_release == 'true' &&
+      needs.build.result == 'success'
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out builder
+        uses: actions/checkout@v4
+
+      - name: Download tested artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: TESTED-${{ needs.resolve.outputs.source_tag }}-*
+          path: downloaded
+
+      - name: Resolve tag annotation again
+        env:
+          WORK_ROOT: ${{ github.workspace }}/publish-work
+          SOURCE_ENV: ${{ github.workspace }}/publish-source.env
+          TAG_ANNOTATION_FILE: ${{ github.workspace }}/upstream-tag-annotation.md
+          SOURCE_TAG: ${{ needs.resolve.outputs.source_tag }}
+          EXPECTED_COMMIT: ${{ needs.resolve.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          bash scripts/resolve-source.sh "$SOURCE_TAG"
+          # shellcheck disable=SC1091
+          source publish-source.env
+          [[ "$SOURCE_COMMIT" == "$EXPECTED_COMMIT" ]]
+          [[ "$TAG_OBJECT_TYPE" == tag ]]
+          test -s upstream-tag-annotation.md
+
+      - name: Prepare distinct release assets
+        env:
+          SOURCE_TAG: ${{ needs.resolve.outputs.source_tag }}
+        run: |
+          set -euo pipefail
+          rm -rf release-assets
+          mkdir -p release-assets
+
+          for artifact_dir in downloaded/TESTED-"$SOURCE_TAG"-*; do
+            [[ -d "$artifact_dir" ]] || continue
+            variant="${artifact_dir##*-}"
+
+            while IFS= read -r -d '' source_file; do
+              base="$(basename "$source_file")"
+              case "$base" in
+                *.bin|*.itb)
+                  extension="${base##*.}"
+                  stem="${base%.*}"
+                  destination="release-assets/${stem}-${variant}.${extension}"
+                  ;;
+                SHA256SUMS)
+                  continue
+                  ;;
+                *)
+                  destination="release-assets/${variant}-${base}"
+                  ;;
+              esac
+              install -m 0644 "$source_file" "$destination"
+            done < <(find "$artifact_dir" -maxdepth 1 -type f -print0)
+          done
+
+          install -m 0644 upstream-tag-annotation.md \
+            release-assets/upstream-tag-annotation.md
+
+          (
+            cd release-assets
+            mapfile -t payload < <(
+              find . -maxdepth 1 -type f ! -name SHA256SUMS \
+                -printf '%f\n' | sort
+            )
+            (( ${#payload[@]} > 0 ))
+            sha256sum "${payload[@]}" > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+
+      - name: Publish tested-tag prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          SOURCE_TAG: ${{ needs.resolve.outputs.source_tag }}
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f -print | sort)
+          (( ${#assets[@]} > 0 ))
+          title="Flint 3 - Percival $SOURCE_TAG"
+
+          if gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${assets[@]}" \
+              --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit "$RELEASE_TAG" \
+              --title "$title" \
+              --notes-file upstream-tag-annotation.md \
+              --prerelease \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "$title" \
+              --notes-file upstream-tag-annotation.md \
+              --prerelease \
+              --repo "$GITHUB_REPOSITORY"
+          fi
+
+      - name: Mark superseded tested release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          supersedes="$(
+            sed -nE 's/^Supersedes:[[:space:]]*//p' \
+              upstream-tag-annotation.md | head -n 1
+          )"
+          [[ -n "$supersedes" ]] || exit 0
+
+          old_release="percival-$supersedes"
+          if ! gh release view "$old_release" \
+            --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Superseded release is not present: $old_release"
+            exit 0
+          fi
+
+          old_title="$(
+            gh release view "$old_release" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json name --jq .name
+          )"
+          case "$old_title" in
+            '[SUPERSEDED]'*) exit 0 ;;
+          esac
+
+          gh release edit "$old_release" \
+            --title "[SUPERSEDED] $old_title" \
+            --repo "$GITHUB_REPOSITORY"

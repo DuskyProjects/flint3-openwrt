@@ -8,6 +8,7 @@ source "$ROOT/build.env"
 WORK_ROOT="${WORK_ROOT:-$ROOT/work}"
 OPENWRT_TREE="$WORK_ROOT/openwrt"
 RELEASE_DIR="${RELEASE_DIR:-$ROOT/release}"
+PACKAGE_MANIFEST="${PACKAGE_MANIFEST:-$ROOT/config/dusky-full.packages}"
 JOBS="${JOBS:-4}"
 
 rm -rf "$OPENWRT_TREE" "$RELEASE_DIR"
@@ -26,6 +27,19 @@ fi
 
 git -C "$OPENWRT_TREE" apply \
   "$ROOT/patches/openwrt/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch"
+
+usb_dts="$OPENWRT_TREE/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts"
+test -f "$usb_dts"
+grep -Fq '&usb {' "$usb_dts"
+grep -Fq 'pinctrl-0 = <&usb_pins>;' "$usb_dts"
+grep -Fq 'pinctrl-names = "default";' "$usb_dts"
+grep -Fq 'qcom,multiplexed-phy;' "$usb_dts"
+
+# IPQ5332 uses the built-in Qualcomm M31 USB PHY driver. There is no
+# kmod-phy-qcom-uniphy-usb package in this source tree.
+ipq53xx_kernel_config="$OPENWRT_TREE/target/linux/qualcommbe/ipq53xx/config-default"
+test -f "$ipq53xx_kernel_config"
+grep -Fqx 'CONFIG_PHY_QCOM_M31_USB=y' "$ipq53xx_kernel_config"
 
 kernel_patch_dir="$OPENWRT_TREE/target/linux/qualcommbe/patches-6.18"
 test -d "$kernel_patch_dir"
@@ -67,11 +81,29 @@ grep -Fqx 'PKG_HASH:=bd694978c0ae6cce318e02ca71189c28deb09e8d9ac3d3e8c18ca0ed264
   ./scripts/feeds install -a
 
   cp "$ROOT/config.seed" .config
+  bash "$ROOT/scripts/apply-package-manifest.sh" "$PACKAGE_MANIFEST" .config
   make defconfig
+  bash "$ROOT/scripts/validate-package-manifest.sh" "$PACKAGE_MANIFEST" .config
 
   grep -Fq 'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y' .config
   grep -Fq 'CONFIG_PACKAGE_iperf3=y' .config
   grep -Fq 'CONFIG_PACKAGE_kmod-usb-dwc3-qcom=y' .config
+
+  # Enforce one implementation for each hardware/service role.
+  forbidden_packages=(
+    kmod-usb-dwc3-of-simple
+    luci-app-samba4
+    samba4-server
+    luci-app-nextdns
+    nextdns
+  )
+
+  for package in "${forbidden_packages[@]}"; do
+    if grep -Eq "^CONFIG_PACKAGE_${package}=[ym]$" .config; then
+      echo "Forbidden package selected: $package" >&2
+      exit 1
+    fi
+  done
 
   # Use the archive and hash declared by Percival's source tree unchanged.
   make package/kernel/mac80211/download V=s
@@ -94,10 +126,16 @@ test -s "$sysupgrade_file"
 
 install -m 0644 "$factory_file" "$RELEASE_DIR/flint3-full-factory.bin"
 install -m 0644 "$sysupgrade_file" "$RELEASE_DIR/flint3-sysupgrade.bin"
+install -m 0644 "$PACKAGE_MANIFEST" "$RELEASE_DIR/dusky-full.packages"
+install -m 0644 "$OPENWRT_TREE/.config" "$RELEASE_DIR/flint3-full.config"
+(
+  cd "$OPENWRT_TREE"
+  ./scripts/diffconfig.sh > "$RELEASE_DIR/flint3-full.diffconfig"
+)
 
 (
   cd "$RELEASE_DIR"
   sha256sum flint3-full-factory.bin flint3-sysupgrade.bin > SHA256SUMS
 )
 
-printf 'Built Percival %s with the Flint 3 USB fixes.\n' "$OPENWRT_COMMIT"
+printf 'Built Percival %s with Flint 3 USB power, ksmbd NAS, dnsproxy, and the validated Dusky package baseline.\n' "$OPENWRT_COMMIT"

@@ -1,8 +1,11 @@
-name: Build Percival Flint 3 firmware
+name: Build Dusky Flint 3 firmware
 
 "on":
   workflow_dispatch:
   push:
+    branches:
+      - main
+  pull_request:
     branches:
       - main
 
@@ -10,7 +13,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: flint3-percival-build
+  group: flint3-dusky-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -40,7 +43,11 @@ jobs:
 
       - name: Validate scripts
         run: |
-          bash -n scripts/build.sh scripts/prepare-backports.sh
+          bash -n \
+            scripts/build.sh \
+            scripts/prepare-backports.sh \
+            scripts/apply-package-manifest.sh \
+            scripts/validate-package-manifest.sh
 
       - name: Build firmware
         env:
@@ -53,16 +60,19 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: flint3-percival-firmware
+          name: flint3-dusky-firmware-${{ github.run_id }}
           path: |
             release/flint3-full-factory.bin
             release/flint3-sysupgrade.bin
             release/SHA256SUMS
+            release/dusky-full.packages
+            release/flint3-full.config
+            release/flint3-full.diffconfig
           if-no-files-found: error
           retention-days: 14
 
       - name: Publish GitHub prerelease
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -70,11 +80,11 @@ jobs:
           source build.env
 
           short_sha="${GITHUB_SHA:0:7}"
-          tag="flint3-percival-${short_sha}"
-          title="Flint 3 Percival firmware (${short_sha})"
+          tag="flint3-dusky-${short_sha}"
+          title="Dusky Flint 3 firmware (${short_sha})"
 
           cat > release-notes.md <<NOTES
-          Experimental OpenWrt firmware for the GL.iNet Flint 3 (GL-BE9300).
+          Experimental Dusky OpenWrt firmware for the GL.iNet Flint 3 (GL-BE9300).
 
           Built from Percival source commit:
           ${OPENWRT_COMMIT}
@@ -85,7 +95,10 @@ jobs:
           Included files:
           - flint3-full-factory.bin — factory/recovery installation image
           - flint3-sysupgrade.bin — OpenWrt sysupgrade image
-          - SHA256SUMS — integrity checksums
+          - SHA256SUMS — firmware integrity checksums
+          - dusky-full.packages — requested GUI-first package manifest
+          - flint3-full.config — complete resolved OpenWrt configuration
+          - flint3-full.diffconfig — compact resolved OpenWrt configuration
 
           This is development firmware. Keep a known recovery method available before flashing.
           NOTES
@@ -95,6 +108,9 @@ jobs:
               release/flint3-full-factory.bin \
               release/flint3-sysupgrade.bin \
               release/SHA256SUMS \
+              release/dusky-full.packages \
+              release/flint3-full.config \
+              release/flint3-full.diffconfig \
               --clobber \
               --repo "$GITHUB_REPOSITORY"
             gh release edit "$tag" \
@@ -107,6 +123,9 @@ jobs:
               release/flint3-full-factory.bin \
               release/flint3-sysupgrade.bin \
               release/SHA256SUMS \
+              release/dusky-full.packages \
+              release/flint3-full.config \
+              release/flint3-full.diffconfig \
               --target "$GITHUB_SHA" \
               --title "$title" \
               --notes-file release-notes.md \
@@ -118,7 +137,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: flint3-percival-build-log
+          name: flint3-dusky-build-log-${{ github.run_id }}
           path: build.log
           if-no-files-found: warn
           retention-days: 14

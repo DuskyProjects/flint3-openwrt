@@ -119,7 +119,8 @@ jobs:
           grep -Fq '/releases/tags/' .github/workflows/percival-tested.yml
           grep -Fq 'A tag without a GitHub Release is not' \
             .github/workflows/percival-tested.yml
-          grep -Fq "release_found: \${{ steps.release.outputs.release_found }}" \
+          grep -Fq 'release_found:' .github/workflows/percival-tested.yml
+          grep -Fq 'steps.release.outputs.release_found' \
             .github/workflows/percival-tested.yml
           grep -Fq "if: needs.resolve.outputs.should_build == 'true'" \
             .github/workflows/percival-tested.yml

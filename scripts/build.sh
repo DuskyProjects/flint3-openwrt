@@ -44,7 +44,26 @@ grep -Fqx 'PKG_HASH:=bd694978c0ae6cce318e02ca71189c28deb09e8d9ac3d3e8c18ca0ed264
 (
   cd "$OPENWRT_TREE"
 
-  ./scripts/feeds update -a
+  # OpenWrt feed hosts occasionally return transient 5xx errors. Re-running
+  # the updater is safe: completed feeds are updated in place and a missing
+  # feed (such as telephony after a failed clone) is cloned on the next pass.
+  feed_attempts=4
+  for attempt in $(seq 1 "$feed_attempts"); do
+    echo "Updating OpenWrt feeds (attempt $attempt/$feed_attempts)..."
+    if ./scripts/feeds update -a; then
+      break
+    fi
+
+    if (( attempt == feed_attempts )); then
+      echo "OpenWrt feeds still failed after $feed_attempts attempts." >&2
+      exit 1
+    fi
+
+    delay=$((attempt * 15))
+    echo "Feed update failed; retrying in ${delay}s..." >&2
+    sleep "$delay"
+  done
+
   ./scripts/feeds install -a
 
   cp "$ROOT/config.seed" .config

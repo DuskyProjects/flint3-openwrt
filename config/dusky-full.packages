@@ -1,25 +1,74 @@
-# Dusky full-feature package manifest.
+# Dusky Flint 3 full package baseline.
 #
-# One OpenWrt package name per line. Dependencies are resolved by OpenWrt.
-# Only packages with a verified GUI or a deliberate GUI integration belong
-# in this file. Backend-only services stay in the roadmap until their
-# Footstrap management workflow exists.
+# One OpenWrt package name per line. Every entry is selected explicitly and
+# validated after make defconfig. This file contains the complete user-facing
+# router baseline, not merely the top-level LuCI applications.
+#
+# Deliberate exclusions are enforced separately:
+# - kmod-usb-dwc3-of-simple must remain disabled; IPQ5332 uses dwc3-qcom.
+# - Samba 4 must not be installed alongside ksmbd.
+# - nextdns must not be installed alongside the dnsproxy-based resolver path.
 
-# Core router management
+# LuCI and router management
+luci
+luci-ssl
+luci-theme-bootstrap
 luci-app-firewall
 
-# Latency and queue management
+# SQM and CAKE
 luci-app-sqm
+kmod-sched-core
+kmod-sched-cake
+kmod-ifb
+tc-tiny
+sqm-scripts
 
-# Network storage
-luci-app-samba4
+# DNS proxy support
+dnsproxy
+ca-bundle
+ca-certificates
+
+# USB controller and storage
+kmod-usb-core
+kmod-usb2
+kmod-usb3
+kmod-usb-dwc3
+kmod-usb-dwc3-qcom
+kmod-usb-xhci-hcd
+kmod-scsi-core
+kmod-usb-storage
+kmod-usb-storage-uas
+block-mount
+blockd
+usbutils
+
+# Filesystem support
+kmod-fs-ext4
+kmod-fs-exfat
+kmod-fs-ntfs3
+kmod-fs-vfat
+kmod-nls-base
+kmod-nls-cp437
+kmod-nls-iso8859-1
+kmod-nls-utf8
+e2fsprogs
+lsblk
+
+# SMB/NAS support: use ksmbd, not Samba 4
+kmod-fs-ksmbd
+ksmbd-server
+luci-app-ksmbd
+wsdd2
+umdns
+
+# ZRAM
+kmod-zram
+kmod-lib-lzo
+zram-swap
 
 # VPN and policy routing
 luci-proto-wireguard
 luci-app-pbr
-
-# DNS
-luci-app-nextdns
 
 # Multi-WAN
 luci-app-mwan3

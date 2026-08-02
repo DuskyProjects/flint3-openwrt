@@ -49,7 +49,10 @@ if [[ ! -s "$ARCHIVE_PATH" ]]; then
   test "$(git -C "$linux_tree" rev-parse HEAD)" = "$BACKPORTS_LINUX_COMMIT"
 
   mkdir -p "$output_root"
-  python3 "$backports_tree/gentree.py" --clean "$linux_tree" "$generated_tree"
+  (
+    cd "$backports_tree"
+    python3 ./gentree.py --clean "$linux_tree" "$generated_tree"
+  )
   test -s "$generated_tree/Makefile"
 
   tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \

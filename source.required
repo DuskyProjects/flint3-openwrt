@@ -1,4 +1,0 @@
-# Critical commit that the prepared OpenWrt source must contain.
-# Format: commit<TAB>description
-
-d90c181d96257c58ac370c19bbd640be7d9c0d76	pinned Perceival Flint 3 source revision

@@ -1,3 +1,3 @@
-work/
-artifacts/
-*.zip
+/work/
+/release/
+/build.log

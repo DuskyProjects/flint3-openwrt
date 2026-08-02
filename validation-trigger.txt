@@ -1,1 +1,0 @@
-Controlled validation trigger for the manual-only Flint 3 builder.

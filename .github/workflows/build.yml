@@ -7,7 +7,7 @@ name: Build Percival Flint 3 firmware
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: flint3-percival-build
@@ -49,7 +49,7 @@ jobs:
           set -o pipefail
           bash scripts/build.sh 2>&1 | tee build.log
 
-      - name: Upload firmware
+      - name: Upload firmware artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
@@ -60,6 +60,59 @@ jobs:
             release/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish GitHub prerelease
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source build.env
+
+          short_sha="${GITHUB_SHA:0:7}"
+          tag="flint3-percival-${short_sha}"
+          title="Flint 3 Percival firmware (${short_sha})"
+
+          cat > release-notes.md <<NOTES
+          Experimental OpenWrt firmware for the GL.iNet Flint 3 (GL-BE9300).
+
+          Built from Percival source commit:
+          ${OPENWRT_COMMIT}
+
+          Builder commit:
+          ${GITHUB_SHA}
+
+          Included files:
+          - flint3-full-factory.bin — factory/recovery installation image
+          - flint3-sysupgrade.bin — OpenWrt sysupgrade image
+          - SHA256SUMS — integrity checksums
+
+          This is development firmware. Keep a known recovery method available before flashing.
+          NOTES
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" \
+              release/flint3-full-factory.bin \
+              release/flint3-sysupgrade.bin \
+              release/SHA256SUMS \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+            gh release edit "$tag" \
+              --title "$title" \
+              --notes-file release-notes.md \
+              --prerelease \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" \
+              release/flint3-full-factory.bin \
+              release/flint3-sysupgrade.bin \
+              release/SHA256SUMS \
+              --target "$GITHUB_SHA" \
+              --title "$title" \
+              --notes-file release-notes.md \
+              --prerelease \
+              --repo "$GITHUB_REPOSITORY"
+          fi
 
       - name: Upload failure log
         if: failure()

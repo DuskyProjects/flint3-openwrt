@@ -1,173 +1,237 @@
 # Dusky Flint 3 OpenWrt
 
-A GUI-first, full-featured OpenWrt firmware project for the **GL.iNet Flint 3 (GL-BE9300)**.
+A GUI-first, full-featured OpenWrt firmware project for the **GL.iNet Flint 3
+(GL-BE9300)**.
 
-The goal is to provide the useful capabilities and ease of use expected from GL.iNet firmware while using a transparent, maintainable OpenWrt base instead of GL.iNet's modified firmware stack.
+The goal is to provide the useful local capabilities and ease of use expected
+from GL.iNet firmware while using a transparent and maintainable OpenWrt base.
+This is not a minimal image. It is intended to become a complete router
+firmware that can be managed safely through a polished web interface while
+retaining normal OpenWrt access for advanced users.
 
-This is not intended to be a minimal router image. It is intended to become a complete router distribution that ordinary users can configure safely through a clear web interface, while retaining normal OpenWrt access for advanced users.
-
-> **Development status:** experimental and not yet ready for normal router use. The current branch establishes the package, validation, and build foundation. Footstrap and the guided management applications are still under development.
-
-## Project goals
-
-The completed Dusky build should provide:
-
-- stock OpenWrt services and configuration wherever possible;
-- Flint 3 hardware support from Perceival's OpenWrt work;
-- broad functional parity with the useful local features of GL.iNet firmware;
-- a polished, responsive LuCI interface using the **Footstrap** theme;
-- GUI-driven setup for routine tasks without requiring SSH;
-- safe presets, input validation, understandable errors, and rollback for disruptive changes;
-- reproducible builds with pinned source revisions, package validation, logs, manifests, and checksums;
-- documented upgrade, backup, recovery, and return-to-stock procedures.
-
-The project is not trying to reproduce GL.iNet's proprietary interface, cloud services, account system, mobile application, or closed background services.
-
-## GUI-first policy
-
-A backend package is not considered a complete feature merely because it compiles or is installed.
-
-A user-facing feature must eventually provide:
-
-- setup and normal operation through LuCI or Footstrap;
-- plain-language descriptions and recommended defaults;
-- visible service and connection status;
-- useful error reporting;
-- validation before settings are applied;
-- protection against incompatible settings;
-- backup, restore, and upgrade behavior;
-- access to the native advanced LuCI page when appropriate.
-
-SSH and manual UCI editing remain available for troubleshooting and expert use, but they are not the intended primary workflow.
-
-## Intended feature set
-
-### Traffic management
-
-- SQM and CAKE;
-- guided bandwidth configuration;
-- gaming, voice, balanced, and custom presets;
-- active queue status;
-- protection against enabling incompatible hardware flow offloading.
-
-### Storage and file sharing
-
-- USB storage detection and persistent mounting;
-- EXT4, exFAT, NTFS, and FAT support where validated;
-- Samba 4 SMB file sharing;
-- user, password, share, permission, and read-only controls;
-- modern SMB discovery;
-- safe eject and storage-health information;
-- LAN-only access by default.
-
-### VPN and routing
-
-- WireGuard client and server workflows;
-- OpenVPN client and server workflows;
-- profile import and export;
-- policy-based routing by device, subnet, destination, or guest network;
-- IPv4, IPv6, and DNS-aware kill switches;
-- multiple tunnel profiles and visible tunnel state;
-- Tailscale and ZeroTier integration after their GUI workflows are complete.
-
-### DNS and filtering
-
-- NextDNS integration;
-- optional AdGuard Home mode;
-- optional encrypted-DNS providers;
-- local hostname resolution through dnsmasq;
-- DNS leak testing;
-- an interface that ensures only one DNS architecture controls client requests at a time.
-
-### WAN and network modes
-
-- multi-WAN and automatic failover;
-- health checks and failback;
-- router, access point, repeater, and bridge-oriented workflows where supported;
-- guest networks;
-- firewall, VLAN, DHCP, IPv6, port-forwarding, and traffic-rule management;
-- guarded application and rollback for settings that could make the router unreachable.
-
-### Monitoring and maintenance
-
-- per-device traffic accounting;
-- WAN, Wi-Fi, VPN, DNS, SQM, storage, temperature, memory, and fault status;
-- diagnostics and privacy-filtered support bundles;
-- configuration backup and restore;
-- custom firmware update metadata and recovery guidance;
-- ramoops/pstore crash-log support.
-
-## Footstrap
-
-**Footstrap** is the planned default LuCI theme and product interface for this firmware.
-
-It is expected to provide:
-
-- a responsive desktop and mobile layout;
-- consistent navigation and terminology;
-- a unified router dashboard;
-- guided first-boot setup;
-- simplified SQM, VPN, DNS, storage, and multi-WAN workflows;
-- cross-feature compatibility warnings;
-- links to full native LuCI pages for advanced configuration.
-
-Footstrap is not yet present in the current image. The current work establishes the validated OpenWrt package layer that Footstrap will manage.
-
-## Current implementation
-
-The first GUI-backed feature tranche currently requests and validates:
-
-| Feature | OpenWrt package |
-|---|---|
-| Firewall management | `luci-app-firewall` |
-| SQM and CAKE | `luci-app-sqm` |
-| Samba 4 network shares | `luci-app-samba4` |
-| WireGuard configuration | `luci-proto-wireguard` |
-| Policy-based routing | `luci-app-pbr` |
-| NextDNS | `luci-app-nextdns` |
-| Multi-WAN | `luci-app-mwan3` |
-
-OpenWrt resolves their backend dependencies. The build fails if a requested package is missing, renamed, disabled, or does not survive `make defconfig`.
-
-See [`docs/gui-package-roadmap.md`](docs/gui-package-roadmap.md) for the enabled package group, the next packages under consideration, custom GUI requirements, and compatibility rules.
+> **Status:** experimental development firmware. Ethernet, Wi-Fi, MLO and
+> sysupgrade are functional in the Perceival base, but the Dusky package set,
+> USB/NAS behavior, GUI workflows, upgrade process and recovery path are still
+> being validated on hardware.
 
 ## Source policy
 
-The firmware source is pinned to:
+The OpenWrt source tree is pinned to:
 
 - repository: `perceival/openwrt-flint3`;
 - branch: `flint3-be9300`;
 - exact commit: recorded in [`build.env`](build.env).
 
-Perceival's repository is the sole OpenWrt hardware-support base for this project.
+Perceival's repository is the sole Flint 3 hardware-support base. This project
+does not merge another complete Flint 3 source tree on top of it. Individual
+external changes may be imported only when their purpose, dependencies,
+licensing and compatibility are understood.
 
-This repository does not combine multiple complete Flint 3 source trees. External changes may only be imported individually when their purpose, source, dependencies, licensing, and compatibility are understood.
+## Project goals
 
-The build currently adds:
+The completed firmware should provide:
 
-- the Dusky package configuration and GUI-first manifest;
-- package-application and validation scripts;
-- Flint 3 USB PHY-mux fixes under `patches/`;
-- the required backports source preparation helper;
-- reproducible build and GitHub Actions workflows;
-- release artifacts, checksums, resolved configuration, and package metadata.
+- stock OpenWrt services and UCI configuration wherever possible;
+- full Flint 3 Ethernet, Wi-Fi 7, MLO, USB and eMMC support;
+- a polished LuCI interface using the planned **Footstrap** theme;
+- GUI-driven setup for routine router, SQM, VPN, DNS and NAS tasks;
+- safe presets, validation, understandable errors and rollback;
+- reproducible builds with pinned source revisions and validated packages;
+- documented backup, upgrade, recovery and return-to-stock procedures.
+
+The project does not attempt to reproduce GL.iNet GoodCloud, account services,
+mobile-app integration, proprietary service daemons or the proprietary GL.iNet
+web interface.
+
+## GUI-first policy
+
+A package is not considered a completed feature merely because it compiles.
+A normal user-facing feature must eventually provide:
+
+- setup and operation through LuCI or Footstrap;
+- recommended defaults and plain-language help;
+- visible service and connection status;
+- input validation and useful errors;
+- protection against incompatible settings;
+- backup, restore and upgrade behavior;
+- access to the native advanced LuCI page where appropriate.
+
+SSH and manual UCI editing remain available for troubleshooting, but they are
+not the intended primary workflow.
+
+## Complete package baseline
+
+[`config/dusky-full.packages`](config/dusky-full.packages) contains the complete
+validated router baseline. It is not limited to top-level LuCI applications.
+Every package listed there must survive `make defconfig`, or the build fails.
+
+### LuCI and management
+
+- `luci`
+- `luci-ssl`
+- `luci-theme-bootstrap` until Footstrap replaces it
+- `luci-app-firewall`
+
+### SQM and CAKE
+
+- `luci-app-sqm`
+- `kmod-sched-core`
+- `kmod-sched-cake`
+- `kmod-ifb`
+- `tc-tiny`
+- `sqm-scripts`
+
+### DNS proxy
+
+- `dnsproxy`
+- `ca-bundle`
+- `ca-certificates`
+
+The intended restored resolver path is dnsmasq forwarding to the local
+`dnsproxy` service at `127.0.0.1#5453`. The separate `nextdns` daemon is not
+installed because two competing local resolver paths would create ambiguous
+DNS behavior.
+
+### USB controller and storage
+
+- `kmod-usb-core`
+- `kmod-usb2`
+- `kmod-usb3`
+- `kmod-usb-dwc3`
+- `kmod-usb-dwc3-qcom`
+- `kmod-usb-xhci-hcd`
+- `kmod-scsi-core`
+- `kmod-usb-storage`
+- `kmod-usb-storage-uas`
+- `block-mount`
+- `blockd`
+- `usbutils`
+
+`kmod-usb-dwc3-of-simple` is deliberately excluded. The flattened IPQ5332
+controller binds through the Qualcomm DWC3 driver.
+
+The old package name `kmod-phy-qcom-uniphy-usb` does not exist in this source
+tree. IPQ5332 uses the built-in Qualcomm M31 USB PHY driver:
+
+```text
+CONFIG_PHY_QCOM_M31_USB=y
+```
+
+The build verifies that kernel setting directly.
+
+### Filesystems
+
+- `kmod-fs-ext4`
+- `kmod-fs-exfat`
+- `kmod-fs-ntfs3`
+- `kmod-fs-vfat`
+- `kmod-nls-base`
+- `kmod-nls-cp437`
+- `kmod-nls-iso8859-1`
+- `kmod-nls-utf8`
+- `e2fsprogs`
+- `lsblk`
+
+### SMB/NAS
+
+- `kmod-fs-ksmbd`
+- `ksmbd-server`
+- `luci-app-ksmbd`
+- `wsdd2`
+- `umdns`
+
+The firmware uses **ksmbd**, matching the known-good router configuration.
+Samba 4 is deliberately excluded so two SMB servers cannot compete for port
+445 or maintain separate share databases.
+
+The restored NAS configuration is expected to mount the existing EXT4
+partition persistently by UUID at:
+
+```text
+/mnt/nas
+```
+
+The firmware contains the required drivers and services. The disk UUID, ksmbd
+users, passwords, share definitions and permissions are configuration data and
+must come from the router backup or a device-specific restore process; they are
+not hardcoded into a public firmware image.
+
+### ZRAM
+
+- `kmod-zram`
+- `kmod-lib-lzo`
+- `zram-swap`
+
+### VPN, routing and WAN
+
+- `luci-proto-wireguard`
+- `luci-app-pbr`
+- `luci-app-mwan3`
+
+Additional OpenVPN, Tailscale, ZeroTier, travel/repeater, monitoring and media
+features will be added only after their package identities and GUI workflows
+are tested against this baseline.
+
+## Flint 3 USB correction
+
+Hardware testing of the first Dusky factory image showed:
+
+- DWC3 bound successfully;
+- USB 2.0 and USB 3.0 xHCI root hubs existed;
+- storage and UAS drivers loaded;
+- inserting a known-good drive produced no event;
+- the drive received no VBUS power.
+
+The board DTS already defined GPIO 16 as an output-high USB power enable, but
+the USB controller did not select that pinctrl state. The Dusky patch now adds:
+
+```dts
+&usb {
+	pinctrl-0 = <&usb_pins>;
+	pinctrl-names = "default";
+	qcom,multiplexed-phy;
+	status = "okay";
+};
+```
+
+The build verifies the GPIO 16 pinctrl state, the USB/PCIe PHY-mux property and
+the built-in M31 USB PHY before compilation.
+
+## Footstrap
+
+**Footstrap** is the planned default LuCI theme and product interface. It is
+expected to provide:
+
+- a responsive desktop and mobile layout;
+- a unified status dashboard;
+- guided first-boot setup;
+- simplified SQM, VPN, DNS, storage and multi-WAN workflows;
+- cross-feature compatibility warnings;
+- links to full native LuCI pages for advanced configuration.
+
+Footstrap is not yet included. The current branch establishes the hardware,
+package, validation and build foundation it will manage.
 
 ## Compatibility rules
 
-The firmware must actively detect, prevent, or clearly warn about unsafe combinations, including:
+The firmware must prevent or clearly warn about unsafe combinations including:
 
 - SQM with hardware flow offloading;
-- multiple DNS services competing for the client resolver path;
-- MLO SSIDs using 802.11r while the current hostapd limitation remains;
-- guest networks gaining SMB access by default;
-- VPN kill switches that fail to cover IPv6 or DNS;
+- multiple DNS services owning the client resolver path;
+- `dnsproxy` together with the separate `nextdns` daemon;
+- ksmbd together with Samba 4;
+- MLO SSIDs using 802.11r;
+- guest networks gaining NAS access by default;
+- VPN kill switches that do not cover IPv6 and DNS;
 - multi-WAN failover bypassing a required VPN;
-- SQM being attached to the wrong interface in repeater or multi-WAN configurations;
-- network changes that could remove management access without rollback.
+- SQM attached to the wrong interface after WAN-mode changes;
+- network changes that can remove management access without rollback.
 
 ## Building
 
-GitHub Actions is the preferred build environment. Development branches are tested through draft pull requests; only `main` may publish firmware prereleases.
+GitHub Actions is the preferred build environment. Development changes are
+tested through draft pull requests; only `main` may publish firmware
+prereleases.
 
 A local build can be started with:
 
@@ -178,57 +242,54 @@ bash scripts/build.sh
 The build process:
 
 1. fetches the exact pinned Perceival commit;
-2. applies the tracked Flint 3 patches;
-3. installs OpenWrt feeds;
-4. copies `config.seed` into the source tree;
-5. applies `config/dusky-full.packages`;
-6. runs `make defconfig`;
-7. validates every requested package symbol;
-8. downloads and compiles the firmware;
-9. verifies that required images exist and are non-empty;
-10. exports firmware, checksums, package requests, full configuration, and diffconfig.
+2. applies the tracked Flint 3 USB patches;
+3. validates the IPQ5332 USB PHY and VBUS pinctrl wiring;
+4. installs OpenWrt feeds;
+5. copies `config.seed` into the source tree;
+6. applies the complete package baseline;
+7. runs `make defconfig`;
+8. validates every requested package;
+9. rejects the generic DWC3 driver, Samba 4 and the separate NextDNS daemon;
+10. downloads and compiles the firmware;
+11. verifies the required factory and sysupgrade images;
+12. exports firmware, checksums, the requested package list and resolved build
+    configuration.
 
 Successful builds create files under `release/`, including:
 
-- `flint3-full-factory.bin`;
-- `flint3-sysupgrade.bin`;
-- `SHA256SUMS`;
-- `REQUESTED_PACKAGES`;
-- `openwrt-full.config`;
-- `openwrt-diffconfig`.
+- `flint3-full-factory.bin`
+- `flint3-sysupgrade.bin`
+- `SHA256SUMS`
+- `dusky-full.packages`
+- `flint3-full.config`
+- `flint3-full.diffconfig`
 
 ## Safety
 
-This is development firmware for a device whose OpenWrt hardware support is still evolving.
+This remains development firmware for hardware whose OpenWrt support is still
+evolving. Before flashing:
 
-Before flashing any image:
-
-- back up the Flint 3 eMMC and calibration data;
+- back up the eMMC and radio calibration data;
 - retain a known-good recovery image;
-- understand the factory and sysupgrade installation paths;
-- verify the SHA256 checksum;
-- confirm that the build is associated with the intended source and builder commits;
-- do not treat a successful compilation as proof that every feature is safe on hardware.
+- verify the image checksum and associated source commit;
+- use the factory image only when transitioning from stock firmware;
+- use the sysupgrade image for an existing OpenWrt installation;
+- do not treat successful compilation as proof of hardware safety.
 
-No stable release should be declared until Ethernet, all Wi-Fi radios, MLO, USB storage, SQM, firewalling, DNS, VPN routing, SMB, upgrade, and recovery behavior have passed device testing.
-
-## Project boundaries
-
-This project does not provide or intend to provide:
-
-- GL.iNet GoodCloud compatibility;
-- GL.iNet account or mobile-app integration;
-- GL.iNet's proprietary web interface or service daemons;
-- bundled passwords, VPN credentials, NextDNS identifiers, private keys, or personal configuration;
-- automatic flashing after every build;
-- support for router models other than the GL.iNet Flint 3 unless explicitly added later.
+No stable release should be declared until Ethernet, all Wi-Fi radios, MLO,
+USB storage, `/mnt/nas`, ksmbd, SQM, firewalling, DNS proxying, VPN routing,
+upgrade and recovery have passed device testing.
 
 ## Repository history
 
-The repository state before the Perceival-only source reset is preserved on:
+The state before the Perceival-only source reset is preserved on:
 
-`backup/pre-perceival-reset-2026-08-01`
+```text
+backup/pre-perceival-reset-2026-08-01
+```
 
 ## Attribution
 
-Flint 3 hardware enablement is based on Perceival's `openwrt-flint3` work and the upstream OpenWrt ecosystem. This project is independent and is not affiliated with or endorsed by GL.iNet or the OpenWrt project.
+Flint 3 hardware enablement is based on Perceival's `openwrt-flint3` work and
+the upstream OpenWrt ecosystem. This independent project is not affiliated
+with or endorsed by GL.iNet or the OpenWrt project.

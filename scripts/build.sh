@@ -8,6 +8,7 @@ source "$ROOT/build.env"
 WORK_ROOT="${WORK_ROOT:-$ROOT/work}"
 OPENWRT_TREE="$WORK_ROOT/openwrt"
 RELEASE_DIR="${RELEASE_DIR:-$ROOT/release}"
+PACKAGE_MANIFEST="${PACKAGE_MANIFEST:-$ROOT/config/dusky-full.packages}"
 JOBS="${JOBS:-4}"
 
 rm -rf "$OPENWRT_TREE" "$RELEASE_DIR"
@@ -67,7 +68,9 @@ grep -Fqx 'PKG_HASH:=bd694978c0ae6cce318e02ca71189c28deb09e8d9ac3d3e8c18ca0ed264
   ./scripts/feeds install -a
 
   cp "$ROOT/config.seed" .config
+  bash "$ROOT/scripts/apply-package-manifest.sh" "$PACKAGE_MANIFEST" .config
   make defconfig
+  bash "$ROOT/scripts/validate-package-manifest.sh" "$PACKAGE_MANIFEST" .config
 
   grep -Fq 'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y' .config
   grep -Fq 'CONFIG_PACKAGE_iperf3=y' .config
@@ -94,10 +97,16 @@ test -s "$sysupgrade_file"
 
 install -m 0644 "$factory_file" "$RELEASE_DIR/flint3-full-factory.bin"
 install -m 0644 "$sysupgrade_file" "$RELEASE_DIR/flint3-sysupgrade.bin"
+install -m 0644 "$PACKAGE_MANIFEST" "$RELEASE_DIR/dusky-full.packages"
+install -m 0644 "$OPENWRT_TREE/.config" "$RELEASE_DIR/flint3-full.config"
+(
+  cd "$OPENWRT_TREE"
+  ./scripts/diffconfig.sh > "$RELEASE_DIR/flint3-full.diffconfig"
+)
 
 (
   cd "$RELEASE_DIR"
   sha256sum flint3-full-factory.bin flint3-sysupgrade.bin > SHA256SUMS
 )
 
-printf 'Built Percival %s with the Flint 3 USB fixes.\n' "$OPENWRT_COMMIT"
+printf 'Built Percival %s with the Flint 3 USB fixes and Dusky GUI package manifest.\n' "$OPENWRT_COMMIT"

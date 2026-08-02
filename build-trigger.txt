@@ -1,2 +1,3 @@
-Firmware build requested: 2026-08-01T19:14:00-05:00
+Firmware build requested: 2026-08-01T19:18:00-05:00
 Source policy: pinned perceival/openwrt-flint3 base only
+Observable run: status and log tail written to build-status.txt

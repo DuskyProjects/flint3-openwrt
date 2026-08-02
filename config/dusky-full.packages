@@ -1,0 +1,25 @@
+# Dusky full-feature package manifest.
+#
+# One OpenWrt package name per line. Dependencies are resolved by OpenWrt.
+# Only packages with a verified GUI or a deliberate GUI integration belong
+# in this file. Backend-only services stay in the roadmap until their
+# Footstrap management workflow exists.
+
+# Core router management
+luci-app-firewall
+
+# Latency and queue management
+luci-app-sqm
+
+# Network storage
+luci-app-samba4
+
+# VPN and policy routing
+luci-proto-wireguard
+luci-app-pbr
+
+# DNS
+luci-app-nextdns
+
+# Multi-WAN
+luci-app-mwan3

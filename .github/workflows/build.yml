@@ -7,6 +7,15 @@ on:
       - main
     paths:
       - build-trigger.txt
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+    branches:
+      - main
+    paths:
+      - build-trigger.txt
 
 permissions:
   contents: write
@@ -21,8 +30,10 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Check out builder
+      - name: Check out trusted main builder
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Record build start
         run: |
@@ -176,7 +187,7 @@ STATUS
             gh release create "$RELEASE_TAG" \
               "$FACTORY_FILE" \
               "$SYSUPGRADE_FILE" \
-              --target "$GITHUB_SHA" \
+              --target main \
               --title "$RELEASE_TITLE" \
               --notes-file release-notes.md \
               --prerelease

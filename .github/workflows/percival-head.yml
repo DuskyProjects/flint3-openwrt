@@ -1,0 +1,180 @@
+name: Track 1 - Build untested Percival HEAD
+
+"on":
+  workflow_dispatch:
+  schedule:
+    - cron: "7 */6 * * *"
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - ".github/workflows/percival-head.yml"
+      - "configs/head-diagnostic.seed"
+      - "scripts/**"
+      - "source.lock"
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: percival-head-${{ github.event.pull_request.number || 'scheduled' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-head:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out builder
+        uses: actions/checkout@v4
+
+      - name: Select source reference
+        id: request
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source source.lock
+
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            requested_ref="$CI_SOURCE_COMMIT"
+          else
+            requested_ref="$OPENWRT_BRANCH"
+          fi
+
+          printf 'requested_ref=%s\n' "$requested_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve exact Percival HEAD
+        id: source
+        env:
+          WORK_ROOT: ${{ github.workspace }}/work
+          REQUESTED_REF: ${{ steps.request.outputs.requested_ref }}
+        run: |
+          set -o pipefail
+          bash scripts/resolve-source.sh "$REQUESTED_REF" \
+            2>&1 | tee resolve-source.log
+
+      - name: Decide whether this HEAD already has an artifact
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHORT: ${{ steps.source.outputs.source_short }}
+        run: |
+          set -euo pipefail
+
+          artifact_name="UNTESTED-PERCIVAL-${SOURCE_SHORT}"
+          should_build="true"
+
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
+            existing_count="$(
+              gh api \
+                -H 'Accept: application/vnd.github+json' \
+                "/repos/$GITHUB_REPOSITORY/actions/artifacts?name=$artifact_name&per_page=100" \
+                --jq '[.artifacts[] | select(.expired == false)] | length'
+            )"
+            if (( existing_count > 0 )); then
+              should_build="false"
+              echo "$artifact_name already exists and has not expired."
+            fi
+          fi
+
+          {
+            printf 'artifact_name=%s\n' "$artifact_name"
+            printf 'should_build=%s\n' "$should_build"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Free runner disk space
+        if: steps.decision.outputs.should_build == 'true'
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo docker image prune --all --force || true
+          df -h
+
+      - name: Install OpenWrt build dependencies
+        if: steps.decision.outputs.should_build == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison g++ gawk \
+            gcc-multilib g++-multilib gettext git libncurses-dev \
+            libssl-dev python3 python3-setuptools python3-pyelftools \
+            rsync swig unzip zlib1g-dev file wget libelf-dev dwarves \
+            ccache coccinelle u-boot-tools zstd
+
+      - name: Restore download cache
+        if: steps.decision.outputs.should_build == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: work/dl
+          key: track1-dl-${{ runner.os }}-${{ steps.source.outputs.source_commit }}-${{ hashFiles('configs/head-diagnostic.seed') }}
+          restore-keys: |
+            track1-dl-${{ runner.os }}-
+
+      - name: Restore compiler cache
+        if: steps.decision.outputs.should_build == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: work/ccache
+          key: track1-ccache-${{ runner.os }}-${{ steps.source.outputs.source_commit }}-${{ hashFiles('configs/head-diagnostic.seed') }}
+          restore-keys: |
+            track1-ccache-${{ runner.os }}-
+
+      - name: Build untested HEAD diagnostics image
+        if: steps.decision.outputs.should_build == 'true'
+        env:
+          BUILD_JOBS: "3"
+          DOWNLOAD_JOBS: "4"
+          BUILD_VARIANT: head-diagnostic
+          CONFIG_SOURCE: ${{ github.workspace }}/configs/head-diagnostic.seed
+          RELEASE_DIR: ${{ github.workspace }}/release/head-diagnostic
+          WORK_ROOT: ${{ github.workspace }}/work
+          SOURCE_ENV: ${{ github.workspace }}/source.env
+        run: |
+          set -o pipefail
+          bash scripts/build-percival.sh 2>&1 | tee build.log
+
+      - name: Compress successful build log
+        if: steps.decision.outputs.should_build == 'true' && success()
+        run: |
+          zstd -f -10 build.log \
+            -o release/head-diagnostic/build.log.zst
+
+      - name: Save download cache
+        if: steps.decision.outputs.should_build == 'true' && always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: work/dl
+          key: track1-dl-${{ runner.os }}-${{ steps.source.outputs.source_commit }}-${{ hashFiles('configs/head-diagnostic.seed') }}
+
+      - name: Save compiler cache
+        if: steps.decision.outputs.should_build == 'true' && always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: work/ccache
+          key: track1-ccache-${{ runner.os }}-${{ steps.source.outputs.source_commit }}-${{ hashFiles('configs/head-diagnostic.seed') }}
+
+      - name: Upload UNTESTED Actions artifact
+        if: steps.decision.outputs.should_build == 'true' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.decision.outputs.artifact_name }}
+          path: release/head-diagnostic/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: UNTESTED-PERCIVAL-FAILURE-${{ github.run_id }}
+          path: |
+            resolve-source.log
+            source.env
+            build.log
+          if-no-files-found: warn
+          retention-days: 14

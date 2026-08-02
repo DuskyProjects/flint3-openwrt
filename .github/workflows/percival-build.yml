@@ -20,9 +20,11 @@ name: Build pinned Percival Flint 3 firmware
         type: boolean
   schedule:
     - cron: "17 */6 * * *"
-  push:
-    branches:
-      - "agent/**"
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
     paths:
       - ".github/workflows/percival-build.yml"
       - "configs/router.seed"
@@ -33,8 +35,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: percival-flint3-firmware
-  cancel-in-progress: ${{ github.event_name == 'push' }}
+  group: percival-flint3-firmware-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -67,7 +69,7 @@ jobs:
               publish_release="${DISPATCH_PUBLISH_RELEASE:-false}"
               force_rebuild="${DISPATCH_FORCE_REBUILD:-false}"
               ;;
-            push)
+            pull_request)
               requested_ref="$CI_SOURCE_COMMIT"
               publish_release="false"
               force_rebuild="true"

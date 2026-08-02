@@ -7,12 +7,11 @@ source "$ROOT/build.env"
 
 WORK_ROOT="${WORK_ROOT:-$ROOT/work}"
 OPENWRT_TREE="$WORK_ROOT/openwrt"
-DOWNLOAD_DIR="$WORK_ROOT/dl"
 RELEASE_DIR="${RELEASE_DIR:-$ROOT/release}"
 JOBS="${JOBS:-4}"
 
 rm -rf "$OPENWRT_TREE" "$RELEASE_DIR"
-mkdir -p "$OPENWRT_TREE" "$DOWNLOAD_DIR" "$RELEASE_DIR"
+mkdir -p "$OPENWRT_TREE" "$RELEASE_DIR"
 
 git -C "$OPENWRT_TREE" init -q
 git -C "$OPENWRT_TREE" remote add origin "https://github.com/$OPENWRT_REPOSITORY.git"
@@ -37,7 +36,10 @@ install -m 0644 \
   "$ROOT/patches/kernel/2990-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch" \
   "$kernel_patch_dir/2990-usb-dwc3-qcom-flatten-ipq5332-and-select-phy-mux.patch"
 
-bash "$ROOT/scripts/prepare-backports.sh" "$OPENWRT_TREE" "$DOWNLOAD_DIR"
+mac80211_makefile="$OPENWRT_TREE/package/kernel/mac80211/Makefile"
+test -f "$mac80211_makefile"
+grep -Fqx 'PKG_UPSTREAM_VERSION:=7.2-rc4' "$mac80211_makefile"
+grep -Fqx 'PKG_HASH:=bd694978c0ae6cce318e02ca71189c28deb09e8d9ac3d3e8c18ca0ed264a728f' "$mac80211_makefile"
 
 (
   cd "$OPENWRT_TREE"
@@ -52,6 +54,8 @@ bash "$ROOT/scripts/prepare-backports.sh" "$OPENWRT_TREE" "$DOWNLOAD_DIR"
   grep -Fq 'CONFIG_PACKAGE_iperf3=y' .config
   grep -Fq 'CONFIG_PACKAGE_kmod-usb-dwc3-qcom=y' .config
 
+  # Use the archive and hash declared by Percival's source tree unchanged.
+  make package/kernel/mac80211/download V=s
   make download -j"$JOBS"
   make -j"$JOBS" V=s
 )

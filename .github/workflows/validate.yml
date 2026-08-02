@@ -1,0 +1,135 @@
+name: Validate Percival builder
+
+"on":
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "configs/**"
+      - "scripts/**"
+      - "source.lock"
+      - "README.md"
+  push:
+    branches:
+      - main
+      - "agent/**"
+    paths:
+      - ".github/workflows/**"
+      - "configs/**"
+      - "scripts/**"
+      - "source.lock"
+      - "README.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out builder
+        uses: actions/checkout@v4
+
+      - name: Install validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-yaml shellcheck
+
+      - name: Validate workflow YAML
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          for path in sorted(Path('.github/workflows').glob('*.yml')):
+              with path.open('r', encoding='utf-8') as handle:
+                  yaml.safe_load(handle)
+              print(f'validated {path}')
+          PY
+
+      - name: Run actionlint
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+      - name: Validate shell scripts
+        run: |
+          bash -n scripts/*.sh
+          shellcheck -S warning scripts/*.sh
+
+      - name: Enforce two-track Percival-only policy
+        run: |
+          set -euo pipefail
+
+          grep -Fqx 'OPENWRT_REPOSITORY=perceival/openwrt-flint3' source.lock
+          grep -Fqx 'OPENWRT_BRANCH=flint3-be9300' source.lock
+          grep -Eq '^CI_SOURCE_COMMIT=[0-9a-f]{40}$' source.lock
+          grep -Eq '^AP_CONFIG_COMMIT=[0-9a-f]{40}$' source.lock
+          grep -Fqx 'AP_CONFIG_PATH=configs/ap.config' source.lock
+          grep -Eq '^AP_CONFIG_BLOB=[0-9a-f]{40}$' source.lock
+
+          test ! -d patches
+          test ! -e scripts/prepare-backports.sh
+          test ! -e build.env
+          test ! -e config.seed
+          test ! -e configs/router.seed
+          test ! -e .github/workflows/build.yml
+          test ! -e .github/workflows/publish-existing.yml
+          test ! -e .github/workflows/percival-build.yml
+
+          test -s .github/workflows/percival-head.yml
+          test -s .github/workflows/percival-tested.yml
+          test -s configs/head-diagnostic.seed
+          test -s configs/tested-router.seed
+
+          forbidden_pattern='kaka''tar|git[[:space:]]+apply|(^|[[:space:]])patch[[:space:]]'
+          if grep -RniE "$forbidden_pattern" \
+            scripts configs source.lock \
+            .github/workflows/percival-head.yml \
+            .github/workflows/percival-tested.yml; then
+            echo "Forbidden secondary source or patching command found." >&2
+            exit 1
+          fi
+
+          grep -Fqx 'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y' \
+            configs/head-diagnostic.seed
+          grep -Fqx 'CONFIG_PACKAGE_iperf3=y' configs/head-diagnostic.seed
+          grep -Fqx 'CONFIG_PACKAGE_kmod-ramoops=y' configs/head-diagnostic.seed
+
+          grep -Fqx 'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y' \
+            configs/tested-router.seed
+          if grep -Eq '^CONFIG_PACKAGE_' configs/tested-router.seed; then
+            echo "Track 2 router seed must retain Percival's normal device profile." >&2
+            exit 1
+          fi
+
+          grep -Fq 'UNTESTED-PERCIVAL-' .github/workflows/percival-head.yml
+          if grep -Fq 'gh release' .github/workflows/percival-head.yml; then
+            echo "Track 1 must never create or modify GitHub Releases." >&2
+            exit 1
+          fi
+
+          grep -Fq '/releases?per_page=100' .github/workflows/percival-tested.yml
+          grep -Fq '/releases/tags/' .github/workflows/percival-tested.yml
+          grep -Fq 'A tag without a GitHub Release is not' \
+            .github/workflows/percival-tested.yml
+          grep -Fq 'release_found:' .github/workflows/percival-tested.yml
+          grep -Fq 'steps.release.outputs.release_found' \
+            .github/workflows/percival-tested.yml
+          grep -Fq "if: needs.resolve.outputs.should_build == 'true'" \
+            .github/workflows/percival-tested.yml
+          grep -Fq 'slug: router' .github/workflows/percival-tested.yml
+          grep -Fq 'slug: ap' .github/workflows/percival-tested.yml
+          grep -Fq 'AP_CONFIG_COMMIT' .github/workflows/percival-tested.yml
+          grep -Fq 'AP_CONFIG_BLOB' .github/workflows/percival-tested.yml
+          grep -Fq 'Require both released variants' \
+            .github/workflows/percival-tested.yml
+          grep -Fq -- '--notes-file upstream-release.md' \
+            .github/workflows/percival-tested.yml
+          grep -Fq 'Supersedes:' .github/workflows/percival-tested.yml

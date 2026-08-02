@@ -69,9 +69,24 @@ grep -Fqx 'PKG_HASH:=bd694978c0ae6cce318e02ca71189c28deb09e8d9ac3d3e8c18ca0ed264
   cp "$ROOT/config.seed" .config
   make defconfig
 
-  grep -Fq 'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y' .config
-  grep -Fq 'CONFIG_PACKAGE_iperf3=y' .config
-  grep -Fq 'CONFIG_PACKAGE_kmod-usb-dwc3-qcom=y' .config
+  required_config=(
+    'CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y'
+    'CONFIG_PACKAGE_iperf3=y'
+    'CONFIG_PACKAGE_kmod-usb-dwc3-qcom=y'
+    'CONFIG_PACKAGE_kmod-fs-ksmbd=y'
+    'CONFIG_PACKAGE_ksmbd-server=y'
+    'CONFIG_PACKAGE_luci-app-ksmbd=y'
+    'CONFIG_PACKAGE_ksmbd-avahi-service=y'
+    'CONFIG_PACKAGE_wsdd2=y'
+    'CONFIG_PACKAGE_kmod-nft-bridge=y'
+  )
+
+  for setting in "${required_config[@]}"; do
+    if ! grep -Fqx "$setting" .config; then
+      echo "Required firmware setting was not selected: $setting" >&2
+      exit 1
+    fi
+  done
 
   # Use the archive and hash declared by Percival's source tree unchanged.
   make package/kernel/mac80211/download V=s
@@ -100,4 +115,4 @@ install -m 0644 "$sysupgrade_file" "$RELEASE_DIR/flint3-sysupgrade.bin"
   sha256sum flint3-full-factory.bin flint3-sysupgrade.bin > SHA256SUMS
 )
 
-printf 'Built Percival %s with the Flint 3 USB fixes.\n' "$OPENWRT_COMMIT"
+printf 'Built Percival %s with Flint 3 USB, SMB/NAS, and LAN-only SSH support.\n' "$OPENWRT_COMMIT"

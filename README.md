@@ -1,80 +1,142 @@
-# Reproducible Percival Flint 3 builder
+# Percival Flint 3 automation
 
-This repository builds standard router firmware for the GL.iNet Flint 3
-(GL-BE9300) from `perceival/openwrt-flint3` only.
+This repository contains two strictly separated automation tracks for the
+GL.iNet Flint 3 (GL-BE9300). Both use only
+`perceival/openwrt-flint3`; neither applies builder-supplied source patches,
+source overlays, generated backports archives, or a second OpenWrt tree.
 
-It replaces floating-HEAD automation with explicit source resolution:
+Custom Dusky firmware is maintained separately in the Dusky custom-build track
+and is not part of these workflows.
 
-- scheduled builds select the newest `tested-*` tag;
-- manual builds accept `latest-tested`, an exact tag, a full commit SHA, or a
-  branch name;
-- CI builds on automation branches use the full commit pinned in `source.lock`;
-- every build checks out the resolved commit in detached-HEAD state and records
-  the exact source metadata in its artifacts.
-
-## Source and configuration policy
+## Source policy
 
 - Upstream repository: `perceival/openwrt-flint3`
-- Expected upstream branch: `flint3-be9300`
+- Upstream development branch: `flint3-be9300`
 - Target: `qualcommbe/ipq53xx`
 - Device: `glinet_gl-be9300`
-- External OpenWrt trees, source overlays, generated backports archives, and
-  builder-supplied source patches are not used.
-- Custom Dusky firmware changes are maintained separately and are not part of
-  this workflow.
+- Every checkout is detached at an exact 40-character source commit.
+- Every artifact records the source ref, commit, date, title, configuration,
+  feed commits, builder commit, and workflow run.
 
-The package seed in `configs/router.seed` keeps the standard router profile and
-adds only LuCI HTTPS, `iperf3`, `ethtool`, `tcpdump`, `kmod-ramoops`, an
-initramfs recovery image, and build provenance options.
+## Track 1: untested Percival HEAD
 
-Percival's `configs/ap.config` is intentionally not used: it is a dumb-AP
-configuration without the normal router firewall, DHCP, DNS, and PPPoE stack.
+Workflow: `.github/workflows/percival-head.yml`
 
-## Workflows
+Track 1 polls the current `flint3-be9300` branch HEAD every six hours. The
+branch is resolved to its exact commit before building.
 
-### Validate Percival builder
+The Track 1 package configuration is `configs/head-diagnostic.seed`. It carries
+forward the original iperf3 bring-up profile:
 
-Runs YAML validation, `actionlint`, `shellcheck`, Bash syntax checks, source
-policy checks, and configuration assertions. It does not compile OpenWrt.
+- normal GL-BE9300 router target;
+- LuCI with HTTPS;
+- `iperf3`, `ethtool`, and `tcpdump`;
+- `kmod-ramoops`;
+- SquashFS and initramfs images.
 
-### Build pinned Percival Flint 3 firmware
+Track 1 outputs are Actions artifacts named:
 
-Runs in three modes:
+```text
+UNTESTED-PERCIVAL-<12-character-source-commit>
+```
 
-1. Every six hours on the default branch, it checks for the newest Percival
-   `tested-*` tag. If the matching prerelease already exists, it exits without
-   rebuilding.
-2. Manual dispatch accepts an exact source selection. Publishing is allowed
-   only when that selection resolves to a `tested-*` tag.
-3. Pushes to `agent/**` branches build the exact `CI_SOURCE_COMMIT` from
-   `source.lock` without publishing a release.
+Track 1 never creates or modifies a GitHub Release. If an unexpired artifact
+already exists for the same source commit, a scheduled run exits without
+rebuilding it.
+
+## Track 2: tested Percival tags
+
+Workflow: `.github/workflows/percival-tested.yml`
+
+Track 2 polls the newest annotated `tested-*` tag every six hours, resolves the
+tag to its exact commit, verifies that it is an annotated tag, and preserves the
+tag annotation verbatim.
+
+Track 2 builds these variants:
+
+1. **Router** — `configs/tested-router.seed` selects the GL-BE9300 target and
+   retains Percival's normal device profile without adding packages.
+2. **AP** — when the selected tested source contains `configs/ap.config`, the
+   workflow builds that upstream sanitized dumb-AP configuration unchanged.
+
+A tested tag created before `configs/ap.config` existed produces only the router
+variant. Pull-request validation separately builds the current pinned AP source
+so the AP path is tested before a later tagged release activates it.
+
+Successful Track 2 builds are Actions artifacts named:
+
+```text
+TESTED-<upstream-tag>-router
+TESTED-<upstream-tag>-ap
+```
+
+Scheduled Track 2 runs publish a prerelease named `percival-<upstream-tag>`.
+The GitHub Release body is the upstream annotated tag message verbatim. Firmware
+assets retain the full OpenWrt filename and add only a final `-router` or `-ap`
+variant suffix before the extension so both variants can coexist in one
+release. The workflow also publishes a combined `SHA256SUMS`.
+
+When a tag annotation contains a `Supersedes:` trailer, the corresponding older
+builder release is retitled with a `[SUPERSEDED]` prefix after the replacement
+release succeeds. Its original release body is left unchanged.
+
+## Validation workflow
+
+Workflow: `.github/workflows/validate.yml`
+
+The validation workflow runs:
+
+- YAML parsing;
+- `actionlint`;
+- Bash syntax checks;
+- ShellCheck;
+- source-policy assertions;
+- checks that Track 1 cannot contain release commands;
+- checks that Track 2 uses the upstream AP configuration and annotated tag body;
+- checks that legacy and collapsed workflows remain absent.
 
 ## Build outputs
 
-Successful runs retain the original OpenWrt firmware filenames and upload:
+Each successful firmware variant contains:
 
-- the GL-BE9300 factory image;
-- the GL-BE9300 sysupgrade image;
+- exactly one GL-BE9300 factory image;
+- exactly one GL-BE9300 sysupgrade image;
 - any GL-BE9300 initramfs image produced by OpenWrt;
 - `SHA256SUMS`;
-- `BUILD-MANIFEST.txt` and `SOURCE-COMMIT.txt`;
-- the expanded diffconfig and feed commit lock;
-- the package manifest, factory FIT inspection, file-type report, upstream
-  known issues, and compressed build log.
+- `BUILD-MANIFEST.txt`;
+- `SOURCE-COMMIT.txt`;
+- `flint3-build.diffconfig`;
+- `input.config`;
+- `feeds-lock.txt`;
+- `package-manifest.txt`;
+- `factory-fit.txt`;
+- `firmware-file-types.txt`;
+- upstream known issues when present;
+- compressed build logs.
 
-The build fails if it finds zero-byte downloads, HTML error pages in the source
-cache, missing or duplicate factory/sysupgrade images, an unparseable factory
-FIT, or a source-tree modification.
+The build fails on zero-byte downloads, HTML error pages stored as source
+archives, missing or duplicate factory/sysupgrade images, an unparseable
+factory FIT, missing `hlos` or `rootfs` FIT sections, checksum failures, source
+commit mismatches, unexpected origin URLs, or tracked source modifications.
 
-## Local use
+## Local validation
 
-The scripts require network access and the normal OpenWrt build dependencies.
-From the repository root:
+Resolve an exact source first, then select a build variant:
 
 ```bash
-bash scripts/resolve-source.sh latest-tested
+bash scripts/resolve-source.sh flint3-be9300
+BUILD_VARIANT=head-diagnostic \
+CONFIG_SOURCE="$PWD/configs/head-diagnostic.seed" \
+RELEASE_DIR="$PWD/release/head-diagnostic" \
 bash scripts/build-percival.sh
 ```
 
-To reproduce a specific source revision, replace `latest-tested` with an exact
-tag or full 40-character commit SHA.
+For a tested router build:
+
+```bash
+bash scripts/resolve-source.sh latest-tested
+BUILD_VARIANT=tested-router \
+CONFIG_SOURCE="$PWD/configs/tested-router.seed" \
+RELEASE_DIR="$PWD/release/router" \
+bash scripts/build-percival.sh
+```

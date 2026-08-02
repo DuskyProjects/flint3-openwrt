@@ -28,6 +28,13 @@ fi
 git -C "$OPENWRT_TREE" apply \
   "$ROOT/patches/openwrt/0900-ipq5332-gl-be9300-enable-usb-phy-mux.patch"
 
+usb_dts="$OPENWRT_TREE/target/linux/qualcommbe/dts/ipq5332-gl-be9300.dts"
+test -f "$usb_dts"
+grep -Fq '&usb {' "$usb_dts"
+grep -Fq 'pinctrl-0 = <&usb_pins>;' "$usb_dts"
+grep -Fq 'pinctrl-names = "default";' "$usb_dts"
+grep -Fq 'qcom,multiplexed-phy;' "$usb_dts"
+
 kernel_patch_dir="$OPENWRT_TREE/target/linux/qualcommbe/patches-6.18"
 test -d "$kernel_patch_dir"
 install -m 0644 \

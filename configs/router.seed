@@ -1,0 +1,21 @@
+CONFIG_TARGET_qualcommbe=y
+CONFIG_TARGET_qualcommbe_ipq53xx=y
+CONFIG_TARGET_qualcommbe_ipq53xx_DEVICE_glinet_gl-be9300=y
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+
+# Standard router web interface.
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+
+# Recovery and diagnostics retained from the iperf3 bring-up workflow.
+CONFIG_PACKAGE_dumpimage=y
+CONFIG_PACKAGE_kmod-ramoops=y
+CONFIG_PACKAGE_ethtool=y
+CONFIG_PACKAGE_iperf3=y
+CONFIG_PACKAGE_tcpdump=y
+
+# Reproducibility and build diagnostics.
+CONFIG_CCACHE=y
+CONFIG_BUILD_LOG=y
+CONFIG_INCLUDE_CONFIG=y

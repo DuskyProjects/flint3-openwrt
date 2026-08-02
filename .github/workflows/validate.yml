@@ -151,7 +151,7 @@ jobs:
           grep -Fq '      - main' .github/workflows/build.yml
           grep -Fq '      - build-trigger.txt' .github/workflows/build.yml
           ! grep -Fq 'schedule:' .github/workflows/build.yml
-          grep -Fq 'cancel-in-progress: false' .github/workflows/build.yml
+          grep -Fq 'cancel-in-progress: true' .github/workflows/build.yml
           grep -Fq 'Nothing was flashed and the router was not rebooted.' scripts/build-local-cachyos.sh
           grep -Fq 'EXPORT_DIR="${EXPORT_DIR:-/mnt/router/flint3-local-build}"' scripts/build-local-cachyos.sh
 
